@@ -1,5 +1,5 @@
 const mongoose = require("mongoose")
-const Store = require("../models/Store")
+const Store = require("../models/store")
 
 async function loadStore(req, res, next) {
 
