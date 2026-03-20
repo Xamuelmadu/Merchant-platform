@@ -1,4 +1,4 @@
-const Store = require("../models/Store")
+const Store = require("../models/store")
 
 async function checkSubscription(req,res,next){
 
