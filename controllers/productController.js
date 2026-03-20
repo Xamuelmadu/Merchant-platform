@@ -1,5 +1,5 @@
 const Store = require("../models/store")
-const Product = require("../models/Product")
+const Product = require("../models/product")
 
 const { importCSV } = require("../services/productImportService")
 const { syncWooProducts } = require("../services/woocommerceService")
