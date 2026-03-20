@@ -1,4 +1,4 @@
-module.exports = {
+const plans = {
 
   free:{
     monthly_order_limit:20,
@@ -24,4 +24,18 @@ module.exports = {
     price:39000
   }
 
+}
+
+function getStoreLimit(plan) {
+  return plans[plan]?.monthly_order_limit ?? plans.free.monthly_order_limit
+}
+
+function getPlan(plan) {
+  return plans[plan] ?? plans.free
+}
+
+module.exports = {
+  ...plans,
+  getStoreLimit,
+  getPlan
 }
