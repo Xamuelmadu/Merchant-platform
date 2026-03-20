@@ -1,4 +1,4 @@
-const Store = require("../models/Store")
+const Store = require("../models/store")
 const { getStoreLimit, getPlan } = require("../config/plans")
 
 
