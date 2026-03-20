@@ -1,5 +1,5 @@
 const Store = require("../models/store")
-const { getStoreLimit, getPlan } = require("../config/plans")
+const { getStoreLimit, getPlan } = require("../config/plan")
 
 
 
