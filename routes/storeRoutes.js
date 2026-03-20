@@ -4,49 +4,14 @@ const router = express.Router()
 const auth = require("../middleware/authMiddleware")
 const storeController = require("../controllers/storeController")
 
-/*
---------------------------------
-STORE ONBOARDING
---------------------------------
-*/
+router.post("/create", auth, storeController.createStore)
 
-router.post(
-  "/create",
-  auth,
-  storeController.createStore
-)
+router.get("/", auth, storeController.getStores)
 
-router.post(
-  "/connect-whatsapp",
-  auth,
-  storeController.connectWhatsApp
-)
+router.get("/:id", auth, storeController.getStore)
 
-router.post(
-  "/payments",
-  auth,
-  storeController.updatePayments
-)
+router.patch("/:id", auth, storeController.updateStore)
 
-router.post(
-  "/finish",
-  auth,
-  storeController.finishOnboarding
-)
-
-
-/*
---------------------------------
-GET CURRENT STORE
---------------------------------
-(Useful for dashboard + onboarding checks)
-*/
-
-router.get(
-  "/me",
-  auth,
-  storeController.getStore
-)
-
+router.delete("/:id", auth, storeController.deleteStore)
 
 module.exports = router
