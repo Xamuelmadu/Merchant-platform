@@ -1,5 +1,5 @@
 const axios = require("axios")
-const Product = require("../models/Product")
+const product = require("../models/product")
 
 async function syncWooProducts(storeId, storeUrl, key, secret) {
 

@@ -59,7 +59,7 @@ router.get(
   "/",
   auth,
   loadStore,
-  productController.getProducts
+  productController.getproducts
 )
 
 /*
@@ -69,7 +69,7 @@ router.get(
   "/:id",
   auth,
   loadStore,
-  productController.getProductById
+  productController.getproductById
 )
 
 /*
@@ -79,7 +79,7 @@ router.patch(
   "/:id",
   auth,
   loadStore,
-  productController.updateProduct
+  productController.updateproduct
 )
 
 /*
@@ -89,7 +89,7 @@ router.delete(
   "/:id",
   auth,
   loadStore,
-  productController.deleteProduct
+  productController.deleteproduct
 )
 
 
@@ -108,7 +108,7 @@ router.post(
   auth,
   loadStore,
   upload.single("file"),
-  productController.importProducts
+  productController.importproducts
 )
 
 
