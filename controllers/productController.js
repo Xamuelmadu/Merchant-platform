@@ -1,5 +1,5 @@
-const store = require("../models/store")
-const product = require("../models/product")
+const Product = require("../models/product")
+const Store = require("../models/store")
 
 const { importCSV } = require("../services/productImportService")
 const { syncWooProducts } = require("../services/woocommerceService")
@@ -13,7 +13,6 @@ ADD PRODUCT
 --------------------------------
 */
 async function addProduct(req, res) {
-
   try {
 
     const { name, description, price, stock = 0, image } = req.body
@@ -38,8 +37,8 @@ async function addProduct(req, res) {
       description,
       price,
       stock,
-      reserved_stock: 0,     //  inventory system ready
-      sold: 0,               //  analytics ready
+      reserved_stock: 0,
+      sold: 0,
       images: image ? [image] : [],
       source: "manual"
     })
@@ -59,7 +58,6 @@ async function addProduct(req, res) {
     })
 
   }
-
 }
 
 
@@ -70,14 +68,13 @@ GET PRODUCTS
 --------------------------------
 */
 async function getProducts(req, res) {
-
   try {
 
     const store = req.store
 
-    const products = await Product
-      .find({ store_id: store._id })
-      .sort({ createdAt: -1 })
+    const products = await Product.find({
+      store_id: store._id
+    }).sort({ createdAt: -1 })
 
     res.json(products)
 
@@ -90,7 +87,6 @@ async function getProducts(req, res) {
     })
 
   }
-
 }
 
 
@@ -101,7 +97,6 @@ GET SINGLE PRODUCT
 --------------------------------
 */
 async function getProductById(req, res) {
-
   try {
 
     const store = req.store
@@ -121,12 +116,13 @@ async function getProductById(req, res) {
 
   } catch (error) {
 
+    console.error("Get product error:", error.message)
+
     res.status(500).json({
       error: error.message
     })
 
   }
-
 }
 
 
@@ -137,11 +133,9 @@ UPDATE PRODUCT
 --------------------------------
 */
 async function updateProduct(req, res) {
-
   try {
 
     const store = req.store
-
     const updates = req.body
 
     const product = await Product.findOneAndUpdate(
@@ -160,18 +154,19 @@ async function updateProduct(req, res) {
     }
 
     res.json({
-      message: "Product updated",
+      message: "Product updated successfully",
       product
     })
 
   } catch (error) {
+
+    console.error("Update product error:", error.message)
 
     res.status(500).json({
       error: error.message
     })
 
   }
-
 }
 
 
@@ -182,7 +177,6 @@ DELETE PRODUCT
 --------------------------------
 */
 async function deleteProduct(req, res) {
-
   try {
 
     const store = req.store
@@ -199,17 +193,18 @@ async function deleteProduct(req, res) {
     }
 
     res.json({
-      message: "Product deleted"
+      message: "Product deleted successfully"
     })
 
   } catch (error) {
+
+    console.error("Delete product error:", error.message)
 
     res.status(500).json({
       error: error.message
     })
 
   }
-
 }
 
 
@@ -220,7 +215,6 @@ IMPORT CSV PRODUCTS
 --------------------------------
 */
 async function importProducts(req, res) {
-
   try {
 
     const store = req.store
@@ -248,7 +242,6 @@ async function importProducts(req, res) {
     })
 
   }
-
 }
 
 
@@ -259,7 +252,6 @@ SYNC WOOCOMMERCE
 --------------------------------
 */
 async function syncWooCommerce(req, res) {
-
   try {
 
     const store = req.store
@@ -273,14 +265,13 @@ async function syncWooCommerce(req, res) {
 
   } catch (error) {
 
-    console.error("Woo sync error:", error)
+    console.error("WooCommerce sync error:", error.message)
 
     res.status(500).json({
       error: error.message
     })
 
   }
-
 }
 
 
@@ -291,7 +282,6 @@ SYNC SHOPIFY
 --------------------------------
 */
 async function syncShopify(req, res) {
-
   try {
 
     const { shop_domain, access_token } = req.body
@@ -324,7 +314,6 @@ async function syncShopify(req, res) {
     })
 
   }
-
 }
 
 

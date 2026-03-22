@@ -21,16 +21,14 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024 // 5MB
   },
   fileFilter: (req, file, cb) => {
-
     if (
       file.mimetype === "text/csv" ||
-      file.originalname.endsWith(".csv")
+      file.originalname.toLowerCase().endsWith(".csv")
     ) {
       cb(null, true)
     } else {
       cb(new Error("Only CSV files are allowed"))
     }
-
   }
 })
 
@@ -59,7 +57,7 @@ router.get(
   "/",
   auth,
   loadStore,
-  productController.getproducts
+  productController.getProducts
 )
 
 /*
@@ -69,7 +67,7 @@ router.get(
   "/:id",
   auth,
   loadStore,
-  productController.getproductById
+  productController.getProductById
 )
 
 /*
@@ -79,7 +77,7 @@ router.patch(
   "/:id",
   auth,
   loadStore,
-  productController.updateproduct
+  productController.updateProduct
 )
 
 /*
@@ -89,7 +87,7 @@ router.delete(
   "/:id",
   auth,
   loadStore,
-  productController.deleteproduct
+  productController.deleteProduct
 )
 
 
@@ -108,7 +106,7 @@ router.post(
   auth,
   loadStore,
   upload.single("file"),
-  productController.importproducts
+  productController.importProducts
 )
 
 
