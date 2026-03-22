@@ -1,5 +1,5 @@
-const Store = require("../models/Store")
-const Order = require("../models/Order")
+const Store = require("../models/store")
+const Order = require("../models/order")
 
 const stripeService = require("./stripeService")
 const paystackService = require("./paystackService")

@@ -1,6 +1,6 @@
 const Store = require("../models/store")
-const Product = require("../models/Product")
-const Order = require("../models/Order")
+const Product = require("../models/product")
+const Order = require("../models/order")
 
 const { processPayment } = require("../services/paymentRouter")
 const { sendWhatsAppMessage } = require("../services/whatsappService")

@@ -1,7 +1,7 @@
 const express = require("express")
 const router = express.Router()
 
-const Store = require("../models/Store")
+const Store = require("../models/store")
 
 
 router.get("/merchant/:number", async (req,res)=>{

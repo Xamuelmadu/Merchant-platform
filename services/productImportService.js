@@ -1,7 +1,7 @@
 const fs = require("fs")
 const csv = require("csv-parser")
 
-const product = require("../models/product")
+const Product = require("../models/product") 
 
 async function importCSV(filePath, storeId){
 
