@@ -1,6 +1,6 @@
-const Store = require("../models/Store")
-const Order = require("../models/Order")
-const Customer = require("../models/Customer")
+const Store = require("../models/store")
+const Order = require("../models/order")
+const Customer = require("../models/customer")
 
 async function getFinancialSummary(req, res) {
 

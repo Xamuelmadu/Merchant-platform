@@ -1,5 +1,5 @@
 const axios = require("axios")
-const Product = require("../models/Product")
+const Product = require("../models/product")
 
 async function syncShopifyProducts(storeId, shop, accessToken) {
 

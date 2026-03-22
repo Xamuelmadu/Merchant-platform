@@ -1,5 +1,5 @@
 const Store = require("../models/store")
-const Order = require("../models/Order")
+const Order = require("../models/order")
 
 
 
