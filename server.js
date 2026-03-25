@@ -21,24 +21,28 @@ const { runMonthlyBilling } = require("./services/billingEngine")
 
 const app = express()
 
+
+
 /*
 --------------------------------
-ENV VALIDATION (CRITICAL FIX)
+ENV VALIDATION
 --------------------------------
 */
 
-const requiredEnv = ["MONGO_URI"]
+const requiredEnv = ["MONGO_URI", "JWT_SECRET"]
 
 requiredEnv.forEach((key) => {
   if (!process.env[key]) {
     console.error(`❌ Missing environment variable: ${key}`)
-    process.exit(1) // HARD STOP → prevents silent Railway crash
+    process.exit(1)
   }
 })
 
+
+
 /*
 --------------------------------
-GLOBAL ERROR SAFETY
+GLOBAL ERROR HANDLING
 --------------------------------
 */
 
@@ -50,13 +54,16 @@ process.on("uncaughtException", (err) => {
   console.error("❌ Uncaught Exception:", err)
 })
 
+
+
 /*
 --------------------------------
-CONNECT DATABASE (SAFE)
+BOOTSTRAP SERVER
 --------------------------------
 */
 
 async function startServer() {
+
   try {
     await connectDB()
     console.log("✅ Database connected")
@@ -64,6 +71,8 @@ async function startServer() {
     console.error("❌ Database connection failed:", err.message)
     process.exit(1)
   }
+
+
 
   /*
   --------------------------------
@@ -74,10 +83,13 @@ async function startServer() {
   app.use(cors({
     origin: process.env.NODE_ENV === "production"
       ? process.env.FRONTEND_URL || "*"
-      : "http://localhost:3000"
+      : "http://localhost:3000",
+    credentials: true
   }))
 
-  app.use(express.json())
+  app.use(express.json({ limit: "10mb" }))
+
+
 
   /*
   --------------------------------
@@ -95,6 +107,8 @@ async function startServer() {
   app.use("/api/billing", billingRoutes)
   app.use("/webhooks", webhookRoutes)
   app.use("/api/integrations", integrationRoutes)
+
+
 
   /*
   --------------------------------
@@ -114,9 +128,11 @@ async function startServer() {
     res.status(200).json({ status: "healthy" })
   })
 
+
+
   /*
   --------------------------------
-  CRON JOBS (SAFE)
+  CRON JOBS
   --------------------------------
   */
 
@@ -134,29 +150,43 @@ async function startServer() {
     console.log("✅ Cron jobs enabled")
   }
 
+
+
   /*
   --------------------------------
-  ERROR HANDLING
+  ERROR HANDLER (MUST BE BEFORE 404)
   --------------------------------
   */
 
   app.use((err, req, res, next) => {
     console.error("❌ Error:", err.stack)
-    res.status(500).json({
+
+    res.status(err.status || 500).json({
       error: "Server error",
-      message: process.env.NODE_ENV === "production"
-        ? "Internal server error"
-        : err.message
+      message:
+        process.env.NODE_ENV === "production"
+          ? "Internal server error"
+          : err.message
     })
   })
 
-  app.use("*", (req, res) => {
-    res.status(404).json({ error: "Route not found" })
-  })
+
 
   /*
   --------------------------------
-  START SERVER (RAILWAY SAFE)
+  404 HANDLER (FIXED ❗)
+  --------------------------------
+  */
+
+  app.use((req, res) => {
+    res.status(404).json({ error: "Route not found" })
+  })
+
+
+
+  /*
+  --------------------------------
+  START SERVER
   --------------------------------
   */
 
@@ -166,6 +196,8 @@ async function startServer() {
     console.log(`🚀 Server running on port ${PORT}`)
     console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
   })
+
+
 
   /*
   --------------------------------
@@ -179,11 +211,14 @@ async function startServer() {
       console.log("✅ Server closed")
     })
   })
+
 }
+
+
 
 /*
 --------------------------------
-BOOTSTRAP
+START APP
 --------------------------------
 */
 
