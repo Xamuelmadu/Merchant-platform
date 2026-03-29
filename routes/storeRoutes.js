@@ -1,7 +1,7 @@
 const express = require("express")
 const router = express.Router()
 
-const auth = require("../middleware/authMiddleware")
+const auth = require("../middleware/auth")
 const storeController = require("../controllers/storeController")
 
 router.post("/create", auth, storeController.createStore)

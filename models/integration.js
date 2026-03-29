@@ -1,21 +1,17 @@
 const mongoose = require("mongoose")
 
 const IntegrationSchema = new mongoose.Schema({
-
-  store_id:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Store"
+  store_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Store"
   },
 
-  provider:String,
+  provider: String,
 
-  credentials:Object,
+  credentials: Object
 
-  created_at:{
-    type:Date,
-    default:Date.now
-  }
-
+}, {
+  timestamps: true
 })
 
-module.exports = mongoose.model("Integration",IntegrationSchema)
+module.exports = mongoose.model("Integration", IntegrationSchema)

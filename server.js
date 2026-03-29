@@ -23,22 +23,27 @@ const app = express()
 
 /*
 --------------------------------
-ENV VALIDATION (CRITICAL FIX)
+ENV VALIDATION
 --------------------------------
 */
 
-const requiredEnv = ["MONGO_URI"]
+const requiredEnv = [
+  "MONGO_URI",
+  "JWT_SECRET",
+  "PAYSTACK_SECRET",
+  "STRIPE_SECRET"
+]
 
 requiredEnv.forEach((key) => {
   if (!process.env[key]) {
     console.error(`❌ Missing environment variable: ${key}`)
-    process.exit(1) // HARD STOP → prevents silent Railway crash
+    process.exit(1)
   }
 })
 
 /*
 --------------------------------
-GLOBAL ERROR SAFETY
+GLOBAL ERROR HANDLING
 --------------------------------
 */
 
@@ -52,11 +57,12 @@ process.on("uncaughtException", (err) => {
 
 /*
 --------------------------------
-CONNECT DATABASE (SAFE)
+BOOTSTRAP SERVER
 --------------------------------
 */
 
 async function startServer() {
+
   try {
     await connectDB()
     console.log("✅ Database connected")
@@ -67,17 +73,32 @@ async function startServer() {
 
   /*
   --------------------------------
-  MIDDLEWARE
+  CORS CONFIG
   --------------------------------
   */
 
   app.use(cors({
     origin: process.env.NODE_ENV === "production"
-      ? process.env.FRONTEND_URL || "*"
-      : "http://localhost:3000"
+      ? process.env.FRONTEND_URL
+      : "http://localhost:3000",
+    credentials: true
   }))
 
-  app.use(express.json())
+  /*
+  --------------------------------
+  STRIPE WEBHOOK RAW BODY (CRITICAL)
+  --------------------------------
+  */
+
+  app.use("/webhooks/stripe", express.raw({ type: "application/json" }))
+
+  /*
+  --------------------------------
+  BODY PARSER
+  --------------------------------
+  */
+
+  app.use(express.json({ limit: "10mb" }))
 
   /*
   --------------------------------
@@ -116,13 +137,13 @@ async function startServer() {
 
   /*
   --------------------------------
-  CRON JOBS (SAFE)
+  CRON JOBS (MONTHLY)
   --------------------------------
   */
 
   if (process.env.ENABLE_CRON === "true") {
-    cron.schedule("0 0 * * *", async () => {
-      console.log("⏳ Running billing cycle...")
+    cron.schedule("0 0 1 * *", async () => {
+      console.log("⏳ Running monthly billing...")
       try {
         await runMonthlyBilling()
         console.log("✅ Billing cycle completed")
@@ -136,27 +157,35 @@ async function startServer() {
 
   /*
   --------------------------------
-  ERROR HANDLING
+  ERROR HANDLER
   --------------------------------
   */
 
   app.use((err, req, res, next) => {
     console.error("❌ Error:", err.stack)
-    res.status(500).json({
+
+    res.status(err.status || 500).json({
       error: "Server error",
-      message: process.env.NODE_ENV === "production"
-        ? "Internal server error"
-        : err.message
+      message:
+        process.env.NODE_ENV === "production"
+          ? "Internal server error"
+          : err.message
     })
   })
 
-  app.use("*", (req, res) => {
+  /*
+  --------------------------------
+  404 HANDLER
+  --------------------------------
+  */
+
+  app.use((req, res) => {
     res.status(404).json({ error: "Route not found" })
   })
 
   /*
   --------------------------------
-  START SERVER (RAILWAY SAFE)
+  START SERVER
   --------------------------------
   */
 
@@ -173,17 +202,22 @@ async function startServer() {
   --------------------------------
   */
 
-  process.on("SIGTERM", () => {
-    console.log("⚠️ SIGTERM received")
+  const shutdown = () => {
+    console.log("⚠️ Shutdown signal received")
     server.close(() => {
       console.log("✅ Server closed")
+      process.exit(0)
     })
-  })
+  }
+
+  process.on("SIGTERM", shutdown)
+  process.on("SIGINT", shutdown)
+
 }
 
 /*
 --------------------------------
-BOOTSTRAP
+START APP
 --------------------------------
 */
 

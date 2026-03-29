@@ -2,7 +2,7 @@ const express = require("express")
 const router = express.Router()
 const multer = require("multer")
 
-const auth = require("../middleware/authMiddleware")
+const auth = require("../middleware/auth")
 const loadStore = require("../middleware/loadStore")
 
 const productController = require("../controllers/productController")
@@ -21,16 +21,14 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024 // 5MB
   },
   fileFilter: (req, file, cb) => {
-
     if (
       file.mimetype === "text/csv" ||
-      file.originalname.endsWith(".csv")
+      file.originalname.toLowerCase().endsWith(".csv")
     ) {
       cb(null, true)
     } else {
       cb(new Error("Only CSV files are allowed"))
     }
-
   }
 })
 

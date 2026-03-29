@@ -45,12 +45,12 @@ const StoreSchema = new mongoose.Schema({
   --------------------------------
   */
 
-  plan: {
-    type: String,
-    enum: ["free", "starter", "growth", "scale"],
-    default: "free",
-    index: true
-  },
+ plan: {
+  type: String,
+  enum: ["free", "basic", "pro", "premium"],
+  default: "free",
+  index: true
+},
 
   subscription_status: {
     type: String,
