@@ -256,9 +256,26 @@ async function syncWooCommerce(req, res) {
 
     const store = req.store
 
-    const count = await syncWooProducts(store._id)
+    const {
+      store_url,
+      consumer_key,
+      consumer_secret
+    } = req.body
 
-    res.json({
+    if (!store_url || !consumer_key || !consumer_secret) {
+      return res.status(400).json({
+        error: "store_url, consumer_key and consumer_secret are required"
+      })
+    }
+
+    const count = await syncWooProducts(
+      store._id,
+      store_url,
+      consumer_key,
+      consumer_secret
+    )
+
+    return res.json({
       success: true,
       imported: count
     })
@@ -267,7 +284,7 @@ async function syncWooCommerce(req, res) {
 
     console.error("WooCommerce sync error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: error.message
     })
 

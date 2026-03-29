@@ -1,41 +1,77 @@
-const plans = {
-
-  free:{
-    monthly_order_limit:20,
-    transaction_fee:0.007,
-    price:0
+const PLANS = {
+  free: {
+    name: "Free",
+    monthly_order_limit: 20,
+    store_limit: 1,
+    billing_cycle: "yearly",
+    price: 0,
+    transaction_fee: 0.007
   },
 
-  starter:{
-    monthly_order_limit:200,
-    transaction_fee:0.005,
-    price:10500
+  basic: {
+    name: "Basic",
+    monthly_order_limit: 200,
+    store_limit: 2,
+    billing_cycle: "yearly",
+    price: 126000,
+    transaction_fee: 0.005
   },
 
-  pro:{
-    monthly_order_limit:999999,
-    transaction_fee:0.0035,
-    price:20500
+  pro: {
+    name: "Pro",
+    monthly_order_limit: 999999,
+    store_limit: 4,
+    billing_cycle: "yearly",
+    price: 246000,
+    transaction_fee: 0.0035
   },
 
-  business:{
-    monthly_order_limit:999999,
-    transaction_fee:0.0025,
-    price:39000
+  premium: {
+    name: "Premium",
+    monthly_order_limit: 999999,
+    store_limit: 6,
+    billing_cycle: "yearly",
+    price: 468000,
+    transaction_fee: 0.0025
   }
-
 }
 
-function getStoreLimit(plan) {
-  return plans[plan]?.monthly_order_limit ?? plans.free.monthly_order_limit
+/*
+--------------------------------
+HELPERS (SAFE ACCESS)
+--------------------------------
+*/
+
+function getPlan(planName = "free") {
+  return PLANS[planName?.toLowerCase()] || PLANS.free
 }
 
-function getPlan(plan) {
-  return plans[plan] ?? plans.free
+function getOrderLimit(planName) {
+  return getPlan(planName).monthly_order_limit
+}
+
+function getTransactionFee(planName) {
+  return getPlan(planName).transaction_fee
+}
+
+function getStoreLimit(planName) {
+  return getPlan(planName).store_limit
+}
+
+function getPlanPrice(planName) {
+  return getPlan(planName).price
+}
+
+function getBillingCycle(planName) {
+  return getPlan(planName).billing_cycle
 }
 
 module.exports = {
-  ...plans,
+  PLANS,
+  getPlan,
+  getOrderLimit,
+  getTransactionFee,
   getStoreLimit,
-  getPlan
+  getPlanPrice,
+  getBillingCycle
 }

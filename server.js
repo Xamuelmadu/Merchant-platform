@@ -21,15 +21,18 @@ const { runMonthlyBilling } = require("./services/billingEngine")
 
 const app = express()
 
-
-
 /*
 --------------------------------
 ENV VALIDATION
 --------------------------------
 */
 
-const requiredEnv = ["MONGO_URI", "JWT_SECRET"]
+const requiredEnv = [
+  "MONGO_URI",
+  "JWT_SECRET",
+  "PAYSTACK_SECRET",
+  "STRIPE_SECRET"
+]
 
 requiredEnv.forEach((key) => {
   if (!process.env[key]) {
@@ -37,8 +40,6 @@ requiredEnv.forEach((key) => {
     process.exit(1)
   }
 })
-
-
 
 /*
 --------------------------------
@@ -53,8 +54,6 @@ process.on("unhandledRejection", (err) => {
 process.on("uncaughtException", (err) => {
   console.error("❌ Uncaught Exception:", err)
 })
-
-
 
 /*
 --------------------------------
@@ -72,24 +71,34 @@ async function startServer() {
     process.exit(1)
   }
 
-
-
   /*
   --------------------------------
-  MIDDLEWARE
+  CORS CONFIG
   --------------------------------
   */
 
   app.use(cors({
     origin: process.env.NODE_ENV === "production"
-      ? process.env.FRONTEND_URL || "*"
+      ? process.env.FRONTEND_URL
       : "http://localhost:3000",
     credentials: true
   }))
 
+  /*
+  --------------------------------
+  STRIPE WEBHOOK RAW BODY (CRITICAL)
+  --------------------------------
+  */
+
+  app.use("/webhooks/stripe", express.raw({ type: "application/json" }))
+
+  /*
+  --------------------------------
+  BODY PARSER
+  --------------------------------
+  */
+
   app.use(express.json({ limit: "10mb" }))
-
-
 
   /*
   --------------------------------
@@ -107,8 +116,6 @@ async function startServer() {
   app.use("/api/billing", billingRoutes)
   app.use("/webhooks", webhookRoutes)
   app.use("/api/integrations", integrationRoutes)
-
-
 
   /*
   --------------------------------
@@ -128,17 +135,15 @@ async function startServer() {
     res.status(200).json({ status: "healthy" })
   })
 
-
-
   /*
   --------------------------------
-  CRON JOBS
+  CRON JOBS (MONTHLY)
   --------------------------------
   */
 
   if (process.env.ENABLE_CRON === "true") {
-    cron.schedule("0 0 * * *", async () => {
-      console.log("⏳ Running billing cycle...")
+    cron.schedule("0 0 1 * *", async () => {
+      console.log("⏳ Running monthly billing...")
       try {
         await runMonthlyBilling()
         console.log("✅ Billing cycle completed")
@@ -150,11 +155,9 @@ async function startServer() {
     console.log("✅ Cron jobs enabled")
   }
 
-
-
   /*
   --------------------------------
-  ERROR HANDLER (MUST BE BEFORE 404)
+  ERROR HANDLER
   --------------------------------
   */
 
@@ -170,19 +173,15 @@ async function startServer() {
     })
   })
 
-
-
   /*
   --------------------------------
-  404 HANDLER (FIXED ❗)
+  404 HANDLER
   --------------------------------
   */
 
   app.use((req, res) => {
     res.status(404).json({ error: "Route not found" })
   })
-
-
 
   /*
   --------------------------------
@@ -197,24 +196,24 @@ async function startServer() {
     console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
   })
 
-
-
   /*
   --------------------------------
   GRACEFUL SHUTDOWN
   --------------------------------
   */
 
-  process.on("SIGTERM", () => {
-    console.log("⚠️ SIGTERM received")
+  const shutdown = () => {
+    console.log("⚠️ Shutdown signal received")
     server.close(() => {
       console.log("✅ Server closed")
+      process.exit(0)
     })
-  })
+  }
+
+  process.on("SIGTERM", shutdown)
+  process.on("SIGINT", shutdown)
 
 }
-
-
 
 /*
 --------------------------------
