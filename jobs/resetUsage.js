@@ -1,5 +1,6 @@
 const Store = require("../models/store")
-const cron = require("node-cron")
+
+async function resetUsage(){
 
 async function resetUsage() {
   try {
