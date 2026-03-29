@@ -4,7 +4,7 @@ const router = express.Router()
 const auth = require("../middleware/auth")
 const loadStore = require("../middleware/loadStore")
 
-const { getFinancialSummary } = require("../controllers/analyticsController")
+const { getFinancialSummary } = require("../controllers/analyticscontroller")
 
 router.get(
   "/financial-summary",
