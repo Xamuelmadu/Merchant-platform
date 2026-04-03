@@ -442,6 +442,7 @@ module.exports = {
   verifyOtp,
   refreshToken,
   logout,
+  logoutAll,
   getSessions,
   revokeSession,
   googleCallback
