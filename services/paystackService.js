@@ -12,9 +12,10 @@ async function createPaystackPayment(order){
         email:`${order.customer_phone}@whatsapp.ai`,
         amount:order.total_price * 100,
 
-        metadata:{
-          order_id:order._id
-        }
+        metadata: {
+  store_id: store._id.toString(),
+  plan: plan
+}
       },
 
       {

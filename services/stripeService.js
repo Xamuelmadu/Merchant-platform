@@ -26,9 +26,9 @@ async function createStripePayment(order){
     success_url:"https://yourdomain.com/payment-success",
     cancel_url:"https://yourdomain.com/payment-cancel",
 
-    metadata:{
-      order_id:order._id
-    }
+    metadata: {
+  plan: plan
+}
 
   })
 

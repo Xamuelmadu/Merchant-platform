@@ -1,3 +1,4 @@
+const mongoose = require("mongoose")
 const Store = require("../models/store")
 const { getStoreLimit, getPlan } = require("../config/plan")
 
@@ -6,8 +7,6 @@ const { getStoreLimit, getPlan } = require("../config/plan")
 /*
 --------------------------------
 CREATE STORE
---------------------------------
-Used in onboarding + multi-store
 --------------------------------
 */
 
@@ -20,50 +19,56 @@ async function createStore(req, res) {
     const userId = req.user.id
     const userPlan = req.user.plan || "free"
 
-    // Validate input
-    if (!store_name || !merchant_phone) {
+    /*
+    --------------------------------
+    VALIDATION
+    --------------------------------
+    */
+    if (!store_name) {
       return res.status(400).json({
-        error: "Store name and phone are required"
+        error: "Store name is required"
       })
     }
-
 
     /*
     --------------------------------
-    CHECK PLAN LIMIT
+    PLAN LIMIT CHECK (SAFE)
     --------------------------------
     */
+    const storeLimit = getStoreLimit(userPlan)
 
-    const existingStores = await Store.find({
+    const currentCount = await Store.countDocuments({
       merchant_id: userId
     })
 
-    const storeLimit = getStoreLimit(userPlan)
-
-    if (existingStores.length >= storeLimit) {
+    if (currentCount >= storeLimit) {
       return res.status(403).json({
-        error: `You can only create ${storeLimit} store(s) on ${userPlan} plan`
+        error: `Store limit reached (${storeLimit}). Upgrade your plan.`,
+        code: "STORE_LIMIT_REACHED"
       })
     }
 
+    /*
+    --------------------------------
+    PLAN CONFIG
+    --------------------------------
+    */
+    const planConfig = getPlan(userPlan)
 
     /*
     --------------------------------
     CREATE STORE
     --------------------------------
     */
-
-    const planConfig = getPlan(userPlan)
-
     const store = await Store.create({
 
       merchant_id: userId,
 
-      store_name,
-      whatsapp_number: merchant_phone,
+      store_name: store_name.trim(),
+      whatsapp_number: merchant_phone || "",
 
       /*
-      PLAN SETTINGS
+      PLAN SNAPSHOT (important)
       */
       plan: userPlan,
       transaction_fee: planConfig.transaction_fee,
@@ -74,24 +79,23 @@ async function createStore(req, res) {
       orders_used: 0,
 
       /*
-      BILLING
+      BILLING STATE
       */
       subscription_status: "active",
       subscription_renewal: null
 
     })
 
-
-    res.status(201).json({
+    return res.status(201).json({
       message: "Store created successfully",
       store
     })
 
   } catch (error) {
 
-    console.error("Create store error:", error)
+    console.error("Create store error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to create store"
     })
 
@@ -103,7 +107,7 @@ async function createStore(req, res) {
 
 /*
 --------------------------------
-GET ALL STORES (MULTI-STORE)
+GET ALL STORES
 --------------------------------
 */
 
@@ -112,19 +116,31 @@ async function getStores(req, res) {
   try {
 
     const userId = req.user.id
+    const userPlan = req.user.plan || "free"
 
     const stores = await Store.find({
       merchant_id: userId
     }).sort({ createdAt: 1 })
 
-
-    res.status(200).json(stores)
+    /*
+    --------------------------------
+    RETURN WITH PLAN META (frontend needs this)
+    --------------------------------
+    */
+    return res.status(200).json({
+      stores,
+      meta: {
+        total: stores.length,
+        limit: getStoreLimit(userPlan),
+        plan: userPlan
+      }
+    })
 
   } catch (error) {
 
-    console.error("Get stores error:", error)
+    console.error("Get stores error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to fetch stores"
     })
 
@@ -155,13 +171,13 @@ async function getStore(req, res) {
       })
     }
 
-    res.status(200).json(store)
+    return res.status(200).json(store)
 
   } catch (error) {
 
-    console.error("Get store error:", error)
+    console.error("Get store error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to fetch store"
     })
 
@@ -183,6 +199,13 @@ async function updateStore(req, res) {
 
     const updates = req.body
 
+    /*
+    Prevent critical overrides
+    */
+    delete updates.merchant_id
+    delete updates.plan
+    delete updates.transaction_fee
+
     const store = await Store.findOneAndUpdate(
       {
         _id: req.params.id,
@@ -198,16 +221,16 @@ async function updateStore(req, res) {
       })
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Store updated successfully",
       store
     })
 
   } catch (error) {
 
-    console.error("Update store error:", error)
+    console.error("Update store error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to update store"
     })
 
@@ -227,9 +250,24 @@ async function deleteStore(req, res) {
 
   try {
 
+    const userId = req.user.id
+
+    const totalStores = await Store.countDocuments({
+      merchant_id: userId
+    })
+
+    /*
+    Prevent deleting last store (important UX/business rule)
+    */
+    if (totalStores <= 1) {
+      return res.status(400).json({
+        error: "You must have at least one store"
+      })
+    }
+
     const store = await Store.findOneAndDelete({
       _id: req.params.id,
-      merchant_id: req.user.id
+      merchant_id: userId
     })
 
     if (!store) {
@@ -238,15 +276,15 @@ async function deleteStore(req, res) {
       })
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Store deleted successfully"
     })
 
   } catch (error) {
 
-    console.error("Delete store error:", error)
+    console.error("Delete store error:", error.message)
 
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to delete store"
     })
 

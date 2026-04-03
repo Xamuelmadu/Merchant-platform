@@ -4,60 +4,67 @@ const Order = require("../models/order")
 const stripeService = require("../services/stripeService")
 const paystackService = require("../services/paystackService")
 
+const { getPlan } = require("../config/plan")
+
+
+
+/*
+--------------------------------
+HELPER: CALCULATE REVENUE
+--------------------------------
+*/
+async function calculateRevenue(storeId){
+
+  const stats = await Order.aggregate([
+    { $match:{ store_id:storeId } },
+    {
+      $group:{
+        _id:null,
+        revenue:{ $sum:{ $ifNull:["$total_price",0] } },
+        orders:{ $sum:1 }
+      }
+    }
+  ])
+
+  return {
+    revenue: stats?.[0]?.revenue || 0,
+    orders: stats?.[0]?.orders || 0
+  }
+
+}
+
 
 
 /*
 --------------------------------
 GET BILLING INFO
 --------------------------------
-GET /billing
---------------------------------
 */
-
 async function getBillingInfo(req,res){
 
   try{
 
-    const store = req.store
-
-    if(!store){
-      return res.status(404).json({
-        error:"Store not found"
-      })
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
     }
 
-    const stats = await Order.aggregate([
-      { $match:{ store_id:store._id } },
-      {
-        $group:{
-          _id:null,
-          revenue:{ $sum:{ $ifNull:["$total_price",0] } },
-          orders:{ $sum:1 }
-        }
-      }
-    ])
+    const { revenue, orders } =
+      await calculateRevenue(req.store._id)
 
-    const revenue = stats?.[0]?.revenue || 0
-    const orders = stats?.[0]?.orders || 0
-
-    const feeRate = store.transaction_fee ?? 0.007
+    const feeRate = req.store.transaction_fee ?? 0.007
 
     const platformFees = revenue * feeRate
 
     res.json({
 
-      plan:store.plan || "free",
-
-      subscription_status:store.subscription_status || "inactive",
-
-      subscription_renewal:store.subscription_renewal || null,
+      plan:req.store.plan || "free",
+      subscription_status:req.store.subscription_status || "inactive",
+      subscription_renewal:req.store.subscription_renewal || null,
 
       revenue,
-
       orders,
 
       platform_fees:platformFees,
-
       net_earnings:revenue - platformFees
 
     })
@@ -65,10 +72,7 @@ async function getBillingInfo(req,res){
   }catch(error){
 
     console.error("Billing info error:",error)
-
-    res.status(500).json({
-      error:"Billing fetch failed"
-    })
+    res.status(500).json({ error:"Billing fetch failed" })
 
   }
 
@@ -78,42 +82,29 @@ async function getBillingInfo(req,res){
 
 /*
 --------------------------------
-GET MONTHLY INVOICE
---------------------------------
-GET /billing/invoice
+GET INVOICE (CURRENT PERIOD)
 --------------------------------
 */
-
 async function getMonthlyInvoice(req,res){
 
   try{
 
-    const store = req.store
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
+    }
 
-    const stats = await Order.aggregate([
-      { $match:{ store_id:store._id } },
-      {
-        $group:{
-          _id:null,
-          revenue:{ $sum:{ $ifNull:["$total_price",0] } }
-        }
-      }
-    ])
+    const { revenue } =
+      await calculateRevenue(req.store._id)
 
-    const revenue = stats?.[0]?.revenue || 0
-
-    const feeRate = store.transaction_fee ?? 0.007
-
+    const feeRate = req.store.transaction_fee ?? 0.007
     const platformFees = revenue * feeRate
 
     res.json({
 
-      month:new Date().toISOString().slice(0,7),
+      period: new Date().toISOString().slice(0,7),
 
       revenue,
-
       platform_fees:platformFees,
-
       amount_due:platformFees,
 
       status:"pending"
@@ -123,10 +114,7 @@ async function getMonthlyInvoice(req,res){
   }catch(error){
 
     console.error("Invoice error:",error)
-
-    res.status(500).json({
-      error:"Invoice fetch failed"
-    })
+    res.status(500).json({ error:"Invoice fetch failed" })
 
   }
 
@@ -138,36 +126,32 @@ async function getMonthlyInvoice(req,res){
 --------------------------------
 PAY INVOICE
 --------------------------------
-POST /billing/pay-invoice
---------------------------------
 */
-
 async function payInvoice(req,res){
 
   try{
 
-    const store = req.store
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
+    }
 
-    const stats = await Order.aggregate([
-      { $match:{ store_id:store._id } },
-      {
-        $group:{
-          _id:null,
-          revenue:{ $sum:{ $ifNull:["$total_price",0] } }
-        }
-      }
-    ])
+    const { revenue } =
+      await calculateRevenue(req.store._id)
 
-    const revenue = stats?.[0]?.revenue || 0
-
-    const feeRate = store.transaction_fee ?? 0.007
-
+    const feeRate = req.store.transaction_fee ?? 0.007
     const fee = revenue * feeRate
 
-    if(store.stripe_customer_id){
+    if(fee <= 0){
+      return res.json({ message:"No invoice due" })
+    }
+
+    /*
+    STRIPE
+    */
+    if(req.store.stripe_customer_id){
 
       await stripeService.chargeCustomer(
-        store.stripe_customer_id,
+        req.store.stripe_customer_id,
         fee
       )
 
@@ -179,10 +163,13 @@ async function payInvoice(req,res){
 
     }
 
-    if(store.paystack_authorization_code){
+    /*
+    PAYSTACK
+    */
+    if(req.store.paystack_authorization_code){
 
       await paystackService.chargeAuthorization(
-        store.paystack_authorization_code,
+        req.store.paystack_authorization_code,
         fee,
         req.user.email
       )
@@ -202,10 +189,7 @@ async function payInvoice(req,res){
   }catch(error){
 
     console.error("Invoice payment error:",error)
-
-    res.status(500).json({
-      error:"Invoice payment failed"
-    })
+    res.status(500).json({ error:"Invoice payment failed" })
 
   }
 
@@ -215,27 +199,29 @@ async function payInvoice(req,res){
 
 /*
 --------------------------------
-GET BILLING HISTORY
---------------------------------
-GET /billing/history
+BILLING HISTORY
 --------------------------------
 */
-
 async function getBillingHistory(req,res){
 
   try{
 
-    const store = req.store
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
+    }
 
     const orders = await Order.find({
-      store_id:store._id
+      store_id:req.store._id,
+      payment_status:"paid"
     })
     .sort({ createdAt:-1 })
     .limit(20)
 
     const history = orders.map(order => ({
-      order_id:order._id,
+      id:order._id,
       amount:order.total_price,
+      fee:order.platform_fee,
+      net:order.merchant_payout,
       date:order.createdAt
     }))
 
@@ -244,10 +230,7 @@ async function getBillingHistory(req,res){
   }catch(error){
 
     console.error("Billing history error:",error)
-
-    res.status(500).json({
-      error:"History fetch failed"
-    })
+    res.status(500).json({ error:"History fetch failed" })
 
   }
 
@@ -257,73 +240,73 @@ async function getBillingHistory(req,res){
 
 /*
 --------------------------------
-UPGRADE PLAN
---------------------------------
-POST /billing/upgrade
+UPGRADE PLAN (YEARLY FIXED)
 --------------------------------
 */
-
 async function upgradePlan(req,res){
 
   try{
 
-    const { plan, gateway="stripe" } = req.body
+    const { plan, gateway="paystack" } = req.body
 
-    const store = req.store
-
-    const planPrices = {
-      starter:0,
-      growth:9500,
-      scale:24000
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
     }
 
-    const amount = planPrices[plan]
+    const planConfig = getPlan(plan)
 
-    if(amount === undefined){
+    if(!planConfig){
       return res.status(400).json({
         error:"Invalid plan"
       })
     }
 
-    if(gateway === "stripe"){
+    const amount = planConfig.price // yearly now
 
-      if(!store.stripe_customer_id){
-
-        const customer = await stripeService.createCustomer(
-          req.user.email
-        )
-
-        store.stripe_customer_id = customer
-
-        await store.save()
-
-      }
-
-      const checkout = await stripeService.createCheckoutSession(
-        store.stripe_customer_id,
-        plan
-      )
-
-      return res.json({
-        gateway:"stripe",
-        checkout_url:checkout
-      })
-
-    }
-
+    /*
+    PAYSTACK
+    */
     if(gateway === "paystack"){
 
-      const payment = await paystackService.createPaystackPayment({
+      const payment =
+        await paystackService.createPaystackPayment({
 
-        email:req.user.email,
+          email:req.user.email,
+          amount
 
-        amount
-
-      })
+        })
 
       return res.json({
         gateway:"paystack",
         payment_link:payment.payment_link
+      })
+
+    }
+
+    /*
+    STRIPE
+    */
+    if(gateway === "stripe"){
+
+      if(!req.store.stripe_customer_id){
+
+        const customer =
+          await stripeService.createCustomer(req.user.email)
+
+        req.store.stripe_customer_id = customer
+        await req.store.save()
+
+      }
+
+      const checkout =
+        await stripeService.createCheckoutSession(
+          req.store.stripe_customer_id,
+          plan
+        )
+
+      return res.json({
+        gateway:"stripe",
+        checkout_url:checkout
       })
 
     }
@@ -334,94 +317,8 @@ async function upgradePlan(req,res){
 
   }catch(error){
 
-    console.error("Upgrade plan error:",error)
-
-    res.status(500).json({
-      error:error.message
-    })
-
-  }
-
-}
-
-
-
-/*
---------------------------------
-CHARGE PLATFORM FEES
---------------------------------
-POST /billing/charge-fees
---------------------------------
-*/
-
-async function chargePlatformFees(req,res){
-
-  try{
-
-    const store = req.store
-
-    const stats = await Order.aggregate([
-      { $match:{ store_id:store._id } },
-      {
-        $group:{
-          _id:null,
-          revenue:{ $sum:{ $ifNull:["$total_price",0] } }
-        }
-      }
-    ])
-
-    const revenue = stats?.[0]?.revenue || 0
-
-    const feeRate = store.transaction_fee ?? 0.007
-
-    const fee = revenue * feeRate
-
-    if(fee <= 0){
-      return res.json({
-        message:"No platform fees due"
-      })
-    }
-
-    if(store.stripe_customer_id){
-
-      await stripeService.chargeCustomer(
-        store.stripe_customer_id,
-        fee
-      )
-
-      return res.json({
-        gateway:"stripe",
-        amount:fee
-      })
-
-    }
-
-    if(store.paystack_authorization_code){
-
-      await paystackService.chargeAuthorization(
-        store.paystack_authorization_code,
-        fee,
-        req.user.email
-      )
-
-      return res.json({
-        gateway:"paystack",
-        amount:fee
-      })
-
-    }
-
-    return res.status(400).json({
-      error:"No payment method available"
-    })
-
-  }catch(error){
-
-    console.error("Charge fee error:",error)
-
-    res.status(500).json({
-      error:error.message
-    })
+    console.error("Upgrade error:",error)
+    res.status(500).json({ error:error.message })
 
   }
 
@@ -433,29 +330,24 @@ async function chargePlatformFees(req,res){
 --------------------------------
 CANCEL SUBSCRIPTION
 --------------------------------
-POST /billing/cancel
---------------------------------
 */
-
 async function cancelSubscription(req,res){
 
   try{
 
-    const store = req.store
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
+    }
 
-    store.subscription_status = "cancelled"
+    req.store.subscription_status = "cancelled"
 
-    await store.save()
+    await req.store.save()
 
-    res.json({
-      message:"Subscription cancelled"
-    })
+    res.json({ message:"Subscription cancelled" })
 
   }catch(error){
 
-    res.status(500).json({
-      error:error.message
-    })
+    res.status(500).json({ error:error.message })
 
   }
 
@@ -470,7 +362,6 @@ module.exports = {
   payInvoice,
   getBillingHistory,
   upgradePlan,
-  chargePlatformFees,
   cancelSubscription
 
 }
