@@ -5,12 +5,8 @@ const cors = require("cors")
 const cron = require("node-cron")
 
 const passport = require("passport")
-require("./config/passport")
-
-app.use(passport.initialize())
 
 const cookieParser = require("cookie-parser")
-app.use(cookieParser())
 
 const connectDB = require("./config/database")
 
@@ -29,6 +25,10 @@ const integrationRoutes = require("./routes/integrationRoutes")
 const { runMonthlyBilling } = require("./services/billingEngine")
 
 const app = express()
+
+require("./config/passport")
+app.use(passport.initialize())
+app.use(cookieParser())
 
 /*
 --------------------------------
