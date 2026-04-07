@@ -152,7 +152,6 @@ async function startServer() {
   --------------------------------
   */
 
-const { runMonthlyBilling } = require("./services/billingService")
 const { checkSubscriptions } = require("./cron/subscriptionCron")
 
 if (process.env.ENABLE_CRON === "true") {
