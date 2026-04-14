@@ -3,7 +3,7 @@ const router = express.Router()
 
 const passport = require("passport")
 
-const auth = require("../middleware/authMiddleware")
+const auth = require("../middleware/auth")
 
 const {
   register,
