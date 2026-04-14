@@ -3,17 +3,20 @@ require("dotenv").config()
 const express = require("express")
 const cors = require("cors")
 const cron = require("node-cron")
-
 const passport = require("passport")
-require("./config/passport")
-
-app.use(passport.initialize())
-
 const cookieParser = require("cookie-parser")
-app.use(cookieParser())
 
 const connectDB = require("./config/database")
 
+// ✅ Create app FIRST
+const app = express()
+
+// ✅ THEN use middleware
+app.use(cookieParser())
+app.use(passport.initialize())
+require("./config/passport")
+
+// Routes
 const authRoutes = require("./routes/authRoutes")
 const storeRoutes = require("./routes/storeRoutes")
 const productRoutes = require("./routes/productRoutes")
@@ -25,10 +28,9 @@ const billingRoutes = require("./routes/billingRoutes")
 const webhookRoutes = require("./routes/webhookRoutes")
 const integrationRoutes = require("./routes/integrationRoutes")
 
-
+// Services
 const { runMonthlyBilling } = require("./services/billingEngine")
-
-const app = express()
+const { checkSubscriptions } = require("./cron/subscriptionCron")
 
 /*
 --------------------------------
@@ -125,8 +127,6 @@ async function startServer() {
   app.use("/api/billing", billingRoutes)
   app.use("/webhooks", webhookRoutes)
   app.use("/api/integrations", integrationRoutes)
-  
-  
 
   /*
   --------------------------------
@@ -145,6 +145,10 @@ async function startServer() {
   app.get("/health", (req, res) => {
     res.status(200).json({ status: "healthy" })
   })
+  
+  app.get("/api/health", (req, res) => {
+    res.status(200).json({ status: "healthy" })
+  })
 
   /*
   --------------------------------
@@ -152,73 +156,58 @@ async function startServer() {
   --------------------------------
   */
 
-const { runMonthlyBilling } = require("./services/billingService")
-const { checkSubscriptions } = require("./cron/subscriptionCron")
+  if (process.env.ENABLE_CRON === "true") {
 
-if (process.env.ENABLE_CRON === "true") {
+    console.log("✅ Cron jobs enabled")
 
-  console.log("✅ Cron jobs enabled")
+    /*
+    --------------------------------
+    1. PLATFORM FEES (MONTHLY)
+    Runs 1st of every month at 00:00
+    --------------------------------
+    */
+    cron.schedule("0 0 1 * *", async () => {
+      console.log("⏳ Running platform fee billing...")
+      try {
+        await runMonthlyBilling()
+        console.log("✅ Platform fees charged")
+      } catch (error) {
+        console.error("❌ Billing failed:", error.message)
+      }
+    })
 
-  /*
-  --------------------------------
-  1. PLATFORM FEES (MONTHLY)
-  Runs 1st of every month at 00:00
-  --------------------------------
-  */
-  cron.schedule("0 0 1 * *", async () => {
+    /*
+    --------------------------------
+    2. SUBSCRIPTION EXPIRY CHECK
+    Runs EVERY HOUR
+    --------------------------------
+    */
+    cron.schedule("0 * * * *", async () => {
+      console.log("⏳ Checking subscription expiry...")
+      try {
+        await checkSubscriptions()
+        console.log("✅ Subscription check complete")
+      } catch (error) {
+        console.error("❌ Subscription check failed:", error.message)
+      }
+    })
 
-    console.log("⏳ Running platform fee billing...")
-
-    try {
-      await runMonthlyBilling()
-      console.log("✅ Platform fees charged")
-    } catch (error) {
-      console.error("❌ Billing failed:", error.message)
-    }
-
-  })
-
-
-  /*
-  --------------------------------
-  2. SUBSCRIPTION EXPIRY CHECK
-  Runs EVERY HOUR
-  --------------------------------
-  */
-  cron.schedule("0 * * * *", async () => {
-
-    console.log("⏳ Checking subscription expiry...")
-
-    try {
-      await checkSubscriptions()
-      console.log("✅ Subscription check complete")
-    } catch (error) {
-      console.error("❌ Subscription check failed:", error.message)
-    }
-
-  })
-
-
-  /*
-  --------------------------------
-  3. SAFETY RECONCILIATION (OPTIONAL)
-  Re-run billing daily to catch failures
-  --------------------------------
-  */
-  cron.schedule("0 2 * * *", async () => {
-
-    console.log("⏳ Running billing reconciliation...")
-
-    try {
-      await runMonthlyBilling()
-      console.log("✅ Reconciliation complete")
-    } catch (error) {
-      console.error("❌ Reconciliation failed:", error.message)
-    }
-
-  })
-
-}
+    /*
+    --------------------------------
+    3. SAFETY RECONCILIATION (OPTIONAL)
+    Re-run billing daily to catch failures
+    --------------------------------
+    */
+    cron.schedule("0 2 * * *", async () => {
+      console.log("⏳ Running billing reconciliation...")
+      try {
+        await runMonthlyBilling()
+        console.log("✅ Reconciliation complete")
+      } catch (error) {
+        console.error("❌ Reconciliation failed:", error.message)
+      }
+    })
+  }
 
   /*
   --------------------------------
@@ -228,7 +217,6 @@ if (process.env.ENABLE_CRON === "true") {
 
   app.use((err, req, res, next) => {
     console.error("❌ Error:", err.stack)
-
     res.status(err.status || 500).json({
       error: "Server error",
       message:
@@ -254,7 +242,7 @@ if (process.env.ENABLE_CRON === "true") {
   --------------------------------
   */
 
-  const PORT = process.env.PORT || 3000
+  const PORT = process.env.PORT || 5000
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 Server running on port ${PORT}`)
