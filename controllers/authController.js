@@ -63,8 +63,8 @@ async function createSessionAndRespond(req, res, user, store) {
 
   res.cookie("refresh_token", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: true,  // Always true for cross-origin cookies
+    sameSite: "none",  // Allow cross-origin
     maxAge: 30 * 24 * 60 * 60 * 1000
   })
 
@@ -95,7 +95,9 @@ async function createSessionOnly(req, res, user) {
 
   res.cookie("refresh_token", refreshToken, {
     httpOnly: true,
-    sameSite: "lax"
+    secure: true,  // Always true for cross-origin cookies
+    sameSite: "none",  // Allow cross-origin
+    maxAge: 30 * 24 * 60 * 60 * 1000
   })
 
 }
