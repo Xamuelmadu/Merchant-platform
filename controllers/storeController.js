@@ -294,10 +294,64 @@ async function deleteStore(req, res) {
 
 
 
+/*
+--------------------------------
+CONNECT WHATSAPP
+--------------------------------
+*/
+
+async function connectWhatsapp(req, res) {
+  try {
+    const { whatsapp_number } = req.body
+
+    if (!whatsapp_number) {
+      return res.status(400).json({
+        error: "WhatsApp number is required"
+      })
+    }
+
+    // Basic phone number validation (starts with +, followed by digits)
+    if (!/^\+\d{10,15}$/.test(whatsapp_number)) {
+      return res.status(400).json({
+        error: "Invalid WhatsApp number format. Use format: +1234567890"
+      })
+    }
+
+    const store = await Store.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        merchant_id: req.user.id
+      },
+      { whatsapp_number: whatsapp_number.trim() },
+      { new: true, runValidators: true }
+    )
+
+    if (!store) {
+      return res.status(404).json({
+        error: "Store not found"
+      })
+    }
+
+    return res.status(200).json({
+      message: "WhatsApp number connected successfully",
+      store
+    })
+
+  } catch (error) {
+    console.error("Connect WhatsApp error:", error.message)
+    return res.status(500).json({
+      error: "Failed to connect WhatsApp"
+    })
+  }
+}
+
+
+
 module.exports = {
   createStore,
   getStores,
   getStore,
   updateStore,
-  deleteStore
+  deleteStore,
+  connectWhatsapp
 }
