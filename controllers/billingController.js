@@ -328,6 +328,81 @@ async function upgradePlan(req,res){
 
 /*
 --------------------------------
+CHARGE PLATFORM FEES
+--------------------------------
+*/
+async function chargePlatformFees(req,res){
+
+  try{
+
+    if(!req.store){
+      return res.status(404).json({ error:"Store not found" })
+    }
+
+    const { revenue } =
+      await calculateRevenue(req.store._id)
+
+    const feeRate = req.store.transaction_fee ?? 0.007
+    const fee = revenue * feeRate
+
+    if(fee <= 0){
+      return res.json({ message:"No platform fees due" })
+    }
+
+    /*
+    STRIPE
+    */
+    if(req.store.stripe_customer_id){
+
+      await stripeService.chargeCustomer(
+        req.store.stripe_customer_id,
+        fee
+      )
+
+      return res.json({
+        gateway:"stripe",
+        amount:fee,
+        status:"charged"
+      })
+
+    }
+
+    /*
+    PAYSTACK
+    */
+    if(req.store.paystack_authorization_code){
+
+      await paystackService.chargeAuthorization(
+        req.store.paystack_authorization_code,
+        fee,
+        req.user.email
+      )
+
+      return res.json({
+        gateway:"paystack",
+        amount:fee,
+        status:"charged"
+      })
+
+    }
+
+    return res.status(400).json({
+      error:"No payment method available"
+    })
+
+  }catch(error){
+
+    console.error("Platform fee charge error:",error)
+    res.status(500).json({ error:"Platform fee charge failed" })
+
+  }
+
+}
+
+
+
+/*
+--------------------------------
 CANCEL SUBSCRIPTION
 --------------------------------
 */
@@ -362,6 +437,7 @@ module.exports = {
   payInvoice,
   getBillingHistory,
   upgradePlan,
-  cancelSubscription
+  cancelSubscription,
+  chargePlatformFees
 
 }

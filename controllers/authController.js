@@ -1,15 +1,13 @@
 const User = require("../models/user")
 const Store = require("../models/store")
 const Otp = require("../models/otp")
-const Session = require("../models/Session")
+const Session = require("../models/session")
 
 const bcrypt = require("bcryptjs")
 const jwt = require("jsonwebtoken")
 const crypto = require("crypto")
 
 const { sendOtpEmail } = require("../services/mailService")
-
-
 
 /*
 --------------------------------
@@ -37,8 +35,6 @@ function generateRefreshToken(user) {
   )
 }
 
-
-
 /*
 --------------------------------
 SESSION HELPERS
@@ -63,8 +59,8 @@ async function createSessionAndRespond(req, res, user, store) {
 
   res.cookie("refresh_token", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
     maxAge: 30 * 24 * 60 * 60 * 1000
   })
 
@@ -73,10 +69,7 @@ async function createSessionAndRespond(req, res, user, store) {
     user,
     store_id: store ? store._id : null
   })
-
 }
-
-
 
 async function createSessionOnly(req, res, user) {
 
@@ -95,12 +88,10 @@ async function createSessionOnly(req, res, user) {
 
   res.cookie("refresh_token", refreshToken, {
     httpOnly: true,
-    sameSite: "lax"
+    secure: true,
+    sameSite: "none"
   })
-
 }
-
-
 
 /*
 --------------------------------
@@ -146,10 +137,7 @@ async function register(req, res) {
     })
 
   }
-
 }
-
-
 
 /*
 --------------------------------
@@ -188,10 +176,7 @@ async function login(req, res) {
     return res.status(500).json({ error: "Login failed" })
 
   }
-
 }
-
-
 
 /*
 --------------------------------
@@ -226,10 +211,7 @@ async function sendOtp(req, res) {
     })
 
   }
-
 }
-
-
 
 /*
 --------------------------------
@@ -278,10 +260,7 @@ async function verifyOtp(req, res) {
     })
 
   }
-
 }
-
-
 
 /*
 --------------------------------
@@ -323,10 +302,7 @@ async function refreshToken(req, res) {
     })
 
   }
-
 }
-
-
 
 /*
 --------------------------------
@@ -355,7 +331,6 @@ async function logout(req, res) {
     })
 
   }
-
 }
 
 async function logoutAll(req, res) {
@@ -382,10 +357,7 @@ async function getSessions(req, res) {
   }).sort({ createdAt: -1 })
 
   res.json(sessions)
-
 }
-
-
 
 async function revokeSession(req, res) {
 
@@ -397,10 +369,7 @@ async function revokeSession(req, res) {
   })
 
   res.json({ message: "Session revoked" })
-
 }
-
-
 
 /*
 --------------------------------
@@ -430,10 +399,7 @@ async function googleCallback(req, res) {
 
     return res.redirect(`${process.env.FRONTEND_URL}/login`)
   }
-
 }
-
-
 
 module.exports = {
   register,
@@ -442,6 +408,7 @@ module.exports = {
   verifyOtp,
   refreshToken,
   logout,
+  logoutAll,
   getSessions,
   revokeSession,
   googleCallback

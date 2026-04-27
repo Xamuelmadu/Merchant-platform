@@ -160,12 +160,6 @@ async function startServer() {
 
     console.log("✅ Cron jobs enabled")
 
-    /*
-    --------------------------------
-    1. PLATFORM FEES (MONTHLY)
-    Runs 1st of every month at 00:00
-    --------------------------------
-    */
     cron.schedule("0 0 1 * *", async () => {
       console.log("⏳ Running platform fee billing...")
       try {
@@ -176,12 +170,6 @@ async function startServer() {
       }
     })
 
-    /*
-    --------------------------------
-    2. SUBSCRIPTION EXPIRY CHECK
-    Runs EVERY HOUR
-    --------------------------------
-    */
     cron.schedule("0 * * * *", async () => {
       console.log("⏳ Checking subscription expiry...")
       try {
@@ -192,12 +180,6 @@ async function startServer() {
       }
     })
 
-    /*
-    --------------------------------
-    3. SAFETY RECONCILIATION (OPTIONAL)
-    Re-run billing daily to catch failures
-    --------------------------------
-    */
     cron.schedule("0 2 * * *", async () => {
       console.log("⏳ Running billing reconciliation...")
       try {
@@ -226,21 +208,9 @@ async function startServer() {
     })
   })
 
-  /*
-  --------------------------------
-  404 HANDLER
-  --------------------------------
-  */
-
   app.use((req, res) => {
     res.status(404).json({ error: "Route not found" })
   })
-
-  /*
-  --------------------------------
-  START SERVER
-  --------------------------------
-  */
 
   const PORT = process.env.PORT || 5000
 
@@ -248,12 +218,6 @@ async function startServer() {
     console.log(`🚀 Server running on port ${PORT}`)
     console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
   })
-
-  /*
-  --------------------------------
-  GRACEFUL SHUTDOWN
-  --------------------------------
-  */
 
   const shutdown = () => {
     console.log("⚠️ Shutdown signal received")
@@ -267,11 +231,5 @@ async function startServer() {
   process.on("SIGINT", shutdown)
 
 }
-
-/*
---------------------------------
-START APP
---------------------------------
-*/
 
 startServer()
