@@ -1,7 +1,7 @@
 const User = require("../models/user")
 const Store = require("../models/store")
 const Otp = require("../models/otp")
-const Session = require("../models/Session")
+const Session = require("../models/session")
 
 const bcrypt = require("bcryptjs")
 const jwt = require("jsonwebtoken")
@@ -442,6 +442,7 @@ module.exports = {
   verifyOtp,
   refreshToken,
   logout,
+  logoutAll,
   getSessions,
   revokeSession,
   googleCallback
