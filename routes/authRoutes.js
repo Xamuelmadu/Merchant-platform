@@ -3,44 +3,22 @@ const router = express.Router()
 
 const passport = require("passport")
 
-const auth = require("../middleware/auth")
-
 const {
-  register,
-  login,
   sendOtp,
   verifyOtp,
   refreshToken,
   logout,
-  logoutAll,
-  getSessions,
-  revokeSession,
   googleCallback
 } = require("../controllers/authController")
 
-
-
 /*
 --------------------------------
-EMAIL AUTH
---------------------------------
-*/
-
-router.post("/register", register)
-router.post("/login", login)
-
-
-
-/*
---------------------------------
-OTP AUTH
+OTP AUTH (PRIMARY ENTRY)
 --------------------------------
 */
 
 router.post("/send-otp", sendOtp)
 router.post("/verify-otp", verifyOtp)
-
-
 
 /*
 --------------------------------
@@ -54,30 +32,9 @@ Refresh access token
 router.get("/refresh", refreshToken)
 
 /*
-Logout current session
+Logout (clear cookie)
 */
 router.post("/logout", logout)
-
-
-
-/*
---------------------------------
-SESSION MANAGEMENT (DEVICES)
---------------------------------
-*/
-
-/*
-Get all active sessions/devices
-*/
-router.get("/sessions", auth, getSessions)
-
-/*
-Revoke specific session/device
-*/
-router.post("/revoke-session", auth, revokeSession)
-router.post("/logout-all", auth, logoutAll)
-
-
 
 /*
 --------------------------------
@@ -95,7 +52,6 @@ router.get(
   })
 )
 
-
 /*
 Google callback
 */
@@ -107,7 +63,5 @@ router.get(
   }),
   googleCallback
 )
-
-
 
 module.exports = router

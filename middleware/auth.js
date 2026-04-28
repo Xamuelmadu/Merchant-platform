@@ -13,7 +13,7 @@ function auth(req, res, next) {
     */
     if (!header) {
       return res.status(401).json({
-        error: "No token provided"
+        error: "Authentication required"
       })
     }
 
@@ -26,7 +26,7 @@ function auth(req, res, next) {
 
     if (parts.length !== 2 || parts[0] !== "Bearer") {
       return res.status(401).json({
-        error: "Invalid token format"
+        error: "Invalid authorization format"
       })
     }
 
@@ -34,41 +34,53 @@ function auth(req, res, next) {
 
     /*
     --------------------------------
-    VERIFY TOKEN
+    VERIFY ACCESS TOKEN ONLY
     --------------------------------
     */
-    if (!process.env.JWT_SECRET) {
-      console.error("JWT_SECRET missing in environment")
-      return res.status(500).json({
-        error: "Server misconfiguration"
-      })
-    }
-
     const decoded = jwt.verify(token, process.env.JWT_SECRET)
 
     /*
     --------------------------------
-    ATTACH USER (SAFE DEFAULTS)
+    ATTACH USER
     --------------------------------
     */
     req.user = {
       id: decoded.id,
       email: decoded.email || null,
-      plan: decoded.plan || "free" // fallback for OAuth users
+      plan: decoded.plan || "free"
     }
 
     return next()
 
   } catch (error) {
 
-    console.error("Auth error:", error.message)
+    /*
+    --------------------------------
+    TOKEN ERROR HANDLING
+    --------------------------------
+    */
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        error: "Token expired"
+      })
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        error: "Invalid token"
+      })
+    }
+
+    console.error("Auth middleware error:", error.message)
 
     return res.status(401).json({
-      error: "Invalid or expired token"
+      error: "Authentication failed"
     })
 
   }
 
 }
+
+
 
 module.exports = auth
