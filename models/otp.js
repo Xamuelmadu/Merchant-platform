@@ -2,7 +2,7 @@ const mongoose = require("mongoose")
 
 const OtpSchema = new mongoose.Schema({
 
-  email: {
+  phone: { // 🔁 changed from email
     type: String,
     required: true,
     index: true
