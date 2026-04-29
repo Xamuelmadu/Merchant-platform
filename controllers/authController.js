@@ -5,7 +5,8 @@ const Otp = require("../models/otp")
 const jwt = require("jsonwebtoken")
 const crypto = require("crypto")
 
-const { sendOtpEmail } = require("../services/mailService")
+// 🔁 CHANGED: WhatsApp OTP instead of email
+const { sendWhatsAppOTP } = require("../services/whatsappOtpService")
 
 /*
 --------------------------------
@@ -17,7 +18,7 @@ function generateAccessToken(user) {
   return jwt.sign(
     {
       id: user._id,
-      email: user.email,
+      phone: user.phone, // 🔁 changed
       plan: user.plan || "free"
     },
     process.env.JWT_SECRET,
@@ -35,7 +36,7 @@ function generateRefreshToken(user) {
 
 /*
 --------------------------------
-CREATE SESSION (SIMPLIFIED)
+CREATE SESSION (UNCHANGED)
 --------------------------------
 */
 
@@ -60,7 +61,7 @@ function createSessionAndRespond(res, user, store) {
 
 /*
 --------------------------------
-SEND OTP
+SEND OTP (WHATSAPP)
 --------------------------------
 */
 
@@ -68,23 +69,32 @@ async function sendOtp(req, res) {
 
   try {
 
-    const { email } = req.body
+    const { phone } = req.body
+
+    if (!phone || !phone.startsWith("+")) {
+      return res.status(400).json({
+        error: "Invalid phone format (use +234...)"
+      })
+    }
 
     const otp = crypto.randomInt(100000, 999999).toString()
 
-    await Otp.deleteMany({ email })
+    // 🔁 changed email → phone
+    await Otp.deleteMany({ phone })
 
     await Otp.create({
-      email,
+      phone,
       otp,
       expires_at: new Date(Date.now() + 10 * 60 * 1000)
     })
 
-    await sendOtpEmail(email, otp)
+    await sendWhatsAppOTP(phone, otp)
 
-    return res.json({ message: "OTP sent" })
+    return res.json({ message: "OTP sent via WhatsApp" })
 
   } catch (error) {
+
+    console.error("Send OTP error:", error)
 
     return res.status(500).json({
       error: "Failed to send OTP"
@@ -103,9 +113,9 @@ async function verifyOtp(req, res) {
 
   try {
 
-    const { email, otp } = req.body
+    const { phone, otp } = req.body
 
-    const record = await Otp.findOne({ email })
+    const record = await Otp.findOne({ phone })
 
     if (!record || record.otp !== otp) {
       return res.status(400).json({ error: "Invalid OTP" })
@@ -115,25 +125,28 @@ async function verifyOtp(req, res) {
       return res.status(400).json({ error: "OTP expired" })
     }
 
-    let user = await User.findOne({ email })
+    let user = await User.findOne({ phone })
 
     if (!user) {
       user = await User.create({
-        email,
-        name: email.split("@")[0],
+        phone,
+        name: phone,
         plan: "free"
       })
     }
 
+    // 🔥 IMPORTANT: KEEP THIS (we still return store if exists)
     const store = await Store.findOne({
       merchant_id: user._id
     })
 
-    await Otp.deleteMany({ email })
+    await Otp.deleteMany({ phone })
 
     return createSessionAndRespond(res, user, store)
 
   } catch (error) {
+
+    console.error("Verify OTP error:", error)
 
     return res.status(500).json({
       error: "OTP verification failed"
@@ -144,7 +157,7 @@ async function verifyOtp(req, res) {
 
 /*
 --------------------------------
-REFRESH TOKEN (NO DB CHECK)
+REFRESH TOKEN (UNCHANGED)
 --------------------------------
 */
 
@@ -181,7 +194,7 @@ async function refreshToken(req, res) {
 
 /*
 --------------------------------
-LOGOUT
+LOGOUT (UNCHANGED)
 --------------------------------
 */
 
@@ -194,7 +207,7 @@ async function logout(req, res) {
 
 /*
 --------------------------------
-GOOGLE CALLBACK
+GOOGLE CALLBACK (MINOR ALIGNMENT)
 --------------------------------
 */
 

@@ -14,10 +14,13 @@ async function createStore(req, res) {
 
   try {
 
-    const { store_name, merchant_phone } = req.body
+    const { store_name } = req.body
 
     const userId = req.user.id
     const userPlan = req.user.plan || "free"
+
+    // 🔥 AUTO USE VERIFIED PHONE
+    const merchant_phone = req.user.phone
 
     /*
     --------------------------------
@@ -65,10 +68,12 @@ async function createStore(req, res) {
       merchant_id: userId,
 
       store_name: store_name.trim(),
+
+      // 🔥 AUTO LINK WHATSAPP
       whatsapp_number: merchant_phone || "",
 
       /*
-      PLAN SNAPSHOT (important)
+      PLAN SNAPSHOT
       */
       plan: userPlan,
       transaction_fee: planConfig.transaction_fee,

@@ -29,9 +29,15 @@ const StoreSchema = new mongoose.Schema({
   },
 
   whatsapp_number: {
-    type: String,
-    trim: true
-  },
+  type: String,
+  trim: true
+},
+
+whatsapp_connected: {
+  type: Boolean,
+  default: false,
+  index: true
+},
 
   industry: {
     type: String,
