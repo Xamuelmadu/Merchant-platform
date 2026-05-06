@@ -157,14 +157,12 @@ async function verifyOtp(req, res) {
 
 /*
 --------------------------------
-REFRESH TOKEN (UNCHANGED)
+GET SESSION
 --------------------------------
 */
 
-router.get("/session", async (req, res) => {
-
+async function getSession(req, res) {
   try {
-
     const token = req.cookies.refresh_token
 
     if (!token) {
@@ -202,8 +200,7 @@ router.get("/session", async (req, res) => {
     })
 
   }
-
-})
+}
 
 /*
 --------------------------------
@@ -260,7 +257,7 @@ async function googleCallback(req, res) {
 module.exports = {
   sendOtp,
   verifyOtp,
-  refreshToken,
+  getSession,
   logout,
   googleCallback
 }
