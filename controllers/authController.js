@@ -237,9 +237,10 @@ async function googleCallback(req, res) {
 
   } catch (error) {
 
-  console.error("GOOGLE CALLBACK ERROR:", error)
+    console.error("GOOGLE CALLBACK ERROR:", error)
 
-  return res.redirect(`${process.env.FRONTEND_URL}/login`)
+    return res.redirect(`${process.env.FRONTEND_URL}/login`)
+  }
 }
 
 module.exports = {
