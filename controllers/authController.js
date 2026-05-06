@@ -235,7 +235,7 @@ async function googleCallback(req, res) {
       `${process.env.FRONTEND_URL}/auth-success?store_id=${store?._id || ""}&token=${accessToken}`
     )
 
- catch (error) {
+  } catch (error) {
 
   console.error("GOOGLE CALLBACK ERROR:", error)
 
