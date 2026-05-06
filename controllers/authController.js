@@ -161,49 +161,36 @@ REFRESH TOKEN (UNCHANGED)
 --------------------------------
 */
 
-router.get("/session", async (req, res) => {
+async function refreshToken(req, res) {
 
   try {
 
     const token = req.cookies.refresh_token
 
     if (!token) {
-      return res.status(401).json({
-        error: "No session"
-      })
+      return res.status(401).json({ error: "No refresh token" })
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_REFRESH_SECRET
-    )
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET)
 
     const user = await User.findById(decoded.id)
 
     if (!user) {
-      return res.status(401).json({
-        error: "User not found"
-      })
+      return res.status(401).json({ error: "User not found" })
     }
 
     const accessToken = generateAccessToken(user)
 
-    return res.json({
-      token: accessToken,
-      user
-    })
+    return res.json({ token: accessToken })
 
   } catch (error) {
 
-    console.error("Session error:", error)
-
     return res.status(401).json({
-      error: "Invalid session"
+      error: "Invalid refresh token"
     })
 
   }
-
-})
+}
 
 /*
 --------------------------------
@@ -228,25 +215,24 @@ async function googleCallback(req, res) {
 
   try {
 
-    if (!req.user) {
-      return res.redirect(`${process.env.FRONTEND_URL}/login`)
-    }
-
     const user = req.user
+
+    const store = await Store.findOne({
+      merchant_id: user._id
+    })
 
     const refreshToken = generateRefreshToken(user)
 
     res.cookie("refresh_token", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "none",
-      maxAge: 30 * 24 * 60 * 60 * 1000
+      sameSite: "none"
     })
 
     const accessToken = generateAccessToken(user)
 
     return res.redirect(
-      `${process.env.FRONTEND_URL}/auth-success?token=${accessToken}`
+      `${process.env.FRONTEND_URL}/auth-success?store_id=${store?._id || ""}&token=${accessToken}`
     )
 
   } catch (error) {
@@ -263,4 +249,5 @@ module.exports = {
   refreshToken,
   logout,
   googleCallback
+  generateAccessToken
 }
