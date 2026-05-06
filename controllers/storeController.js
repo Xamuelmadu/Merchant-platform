@@ -299,10 +299,66 @@ async function deleteStore(req, res) {
 
 
 
+/*
+--------------------------------
+CONNECT WHATSAPP
+--------------------------------
+*/
+
+async function connectWhatsapp(req, res) {
+
+  try {
+
+    const { whatsapp_number } = req.body
+
+    if (!whatsapp_number) {
+      return res.status(400).json({
+        error: "WhatsApp number is required"
+      })
+    }
+
+    const store = await Store.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        merchant_id: req.user.id
+      },
+      {
+        whatsapp_number: whatsapp_number.trim(),
+        whatsapp_connected: true
+      },
+      { new: true, runValidators: true }
+    )
+
+    if (!store) {
+      return res.status(404).json({
+        error: "Store not found"
+      })
+    }
+
+    return res.status(200).json({
+      message: "WhatsApp connected successfully",
+      store
+    })
+
+  } catch (error) {
+
+    console.error("Connect WhatsApp error:", error.message)
+
+    return res.status(500).json({
+      error: "Failed to connect WhatsApp"
+    })
+
+  }
+
+}
+
+
+
 module.exports = {
   createStore,
   getStores,
   getStore,
   updateStore,
-  deleteStore
+  deleteStore,
+  connectWhatsapp
 }
