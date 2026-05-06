@@ -77,4 +77,18 @@ router.delete(
 
 
 
+/*
+--------------------------------
+CONNECT WHATSAPP
+--------------------------------
+*/
+router.post(
+  "/:id/connect-whatsapp",
+  auth,
+  loadStore,
+  storeController.connectWhatsapp
+)
+
+
+
 module.exports = router
