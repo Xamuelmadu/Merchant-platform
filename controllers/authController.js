@@ -215,31 +215,57 @@ async function googleCallback(req, res) {
 
   try {
 
+    console.log("===== GOOGLE CALLBACK START =====")
+
+    console.log("REQ USER:", req.user)
+
+    if (!req.user) {
+
+      console.log("NO USER FOUND")
+
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/login`
+      )
+    }
+
     const user = req.user
 
-    const store = await Store.findOne({
-      merchant_id: user._id
-    })
+    console.log("USER ID:", user._id)
 
     const refreshToken = generateRefreshToken(user)
+
+    console.log("REFRESH TOKEN CREATED")
 
     res.cookie("refresh_token", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "none"
+      sameSite: "none",
+      maxAge: 30 * 24 * 60 * 60 * 1000
     })
+
+    console.log("COOKIE SET")
 
     const accessToken = generateAccessToken(user)
 
-    return res.redirect(
-      `${process.env.FRONTEND_URL}/auth-success?store_id=${store?._id || ""}&token=${accessToken}`
-    )
+    console.log("ACCESS TOKEN CREATED")
+
+    const redirectUrl =
+      `${process.env.FRONTEND_URL}/auth-success?token=${accessToken}`
+
+    console.log("REDIRECT URL:", redirectUrl)
+
+    console.log("===== GOOGLE CALLBACK SUCCESS =====")
+
+    return res.redirect(redirectUrl)
 
   } catch (error) {
 
-    console.error("GOOGLE CALLBACK ERROR:", error)
+    console.error("===== GOOGLE CALLBACK ERROR =====")
+    console.error(error)
 
-    return res.redirect(`${process.env.FRONTEND_URL}/login`)
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/login`
+    )
   }
 }
 
