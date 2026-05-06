@@ -235,10 +235,11 @@ async function googleCallback(req, res) {
       `${process.env.FRONTEND_URL}/auth-success?store_id=${store?._id || ""}&token=${accessToken}`
     )
 
-  } catch (error) {
+ catch (error) {
 
-    return res.redirect(`${process.env.FRONTEND_URL}/login`)
-  }
+  console.error("GOOGLE CALLBACK ERROR:", error)
+
+  return res.redirect(`${process.env.FRONTEND_URL}/login`)
 }
 
 module.exports = {
