@@ -274,5 +274,7 @@ module.exports = {
   verifyOtp,
   refreshToken,
   logout,
-  googleCallback
+  googleCallback,
+  generateAccessToken,
+  generateRefreshToken
 }
