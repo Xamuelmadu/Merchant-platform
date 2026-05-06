@@ -249,5 +249,4 @@ module.exports = {
   refreshToken,
   logout,
   googleCallback
-  generateAccessToken
 }
