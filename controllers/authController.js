@@ -161,36 +161,49 @@ REFRESH TOKEN (UNCHANGED)
 --------------------------------
 */
 
-async function refreshToken(req, res) {
+router.get("/session", async (req, res) => {
 
   try {
 
     const token = req.cookies.refresh_token
 
     if (!token) {
-      return res.status(401).json({ error: "No refresh token" })
+      return res.status(401).json({
+        error: "No session"
+      })
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET)
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_REFRESH_SECRET
+    )
 
     const user = await User.findById(decoded.id)
 
     if (!user) {
-      return res.status(401).json({ error: "User not found" })
+      return res.status(401).json({
+        error: "User not found"
+      })
     }
 
     const accessToken = generateAccessToken(user)
 
-    return res.json({ token: accessToken })
+    return res.json({
+      token: accessToken,
+      user
+    })
 
   } catch (error) {
 
+    console.error("Session error:", error)
+
     return res.status(401).json({
-      error: "Invalid refresh token"
+      error: "Invalid session"
     })
 
   }
-}
+
+})
 
 /*
 --------------------------------
@@ -215,24 +228,25 @@ async function googleCallback(req, res) {
 
   try {
 
-    const user = req.user
+    if (!req.user) {
+      return res.redirect(`${process.env.FRONTEND_URL}/login`)
+    }
 
-    const store = await Store.findOne({
-      merchant_id: user._id
-    })
+    const user = req.user
 
     const refreshToken = generateRefreshToken(user)
 
     res.cookie("refresh_token", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "none"
+      sameSite: "none",
+      maxAge: 30 * 24 * 60 * 60 * 1000
     })
 
     const accessToken = generateAccessToken(user)
 
     return res.redirect(
-      `${process.env.FRONTEND_URL}/auth-success?store_id=${store?._id || ""}&token=${accessToken}`
+      `${process.env.FRONTEND_URL}/auth-success?token=${accessToken}`
     )
 
   } catch (error) {
