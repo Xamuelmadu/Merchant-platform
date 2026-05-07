@@ -4,6 +4,8 @@ const router = express.Router()
 const auth = require("../middleware/auth")
 const loadStore = require("../middleware/loadStore")
 
+const { protect } = require("../middleware/authMiddleware")
+
 const storeController = require("../controllers/storeController")
 
 
