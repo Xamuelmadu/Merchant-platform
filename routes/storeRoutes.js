@@ -4,10 +4,8 @@ const router = express.Router()
 const auth = require("../middleware/auth")
 const loadStore = require("../middleware/loadStore")
 
-const { protect } = require("../middleware/authMiddleware")
-
-const storeController = require("../controllers/storeController")
-
+const storeController =
+  require("../controllers/storeController")
 
 
 /*
@@ -24,7 +22,6 @@ router.post(
 )
 
 
-
 /*
 --------------------------------
 GET ALL STORES (MULTI-STORE)
@@ -35,7 +32,6 @@ router.get(
   auth,
   storeController.getStores
 )
-
 
 
 /*
@@ -50,7 +46,6 @@ router.get(
 )
 
 
-
 /*
 --------------------------------
 UPDATE STORE
@@ -59,10 +54,9 @@ UPDATE STORE
 router.patch(
   "/:id",
   auth,
-  loadStore, // ensures store belongs to user
+  loadStore,
   storeController.updateStore
 )
-
 
 
 /*
@@ -73,13 +67,19 @@ DELETE STORE
 router.delete(
   "/:id",
   auth,
-  loadStore, // ensures secure deletion
+  loadStore,
   storeController.deleteStore
 )
 
+
+/*
+--------------------------------
+STORE PAYMENT SETTINGS
+--------------------------------
+*/
 router.post(
   "/payments",
-  protect,
+  auth,
   storeController.savePaymentSettings
 )
 
