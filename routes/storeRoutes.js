@@ -75,6 +75,11 @@ router.delete(
   storeController.deleteStore
 )
 
+router.post(
+  "/payments",
+  protect,
+  storeController.savePaymentSettings
+)
 
 
 module.exports = router

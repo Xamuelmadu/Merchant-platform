@@ -297,6 +297,81 @@ async function deleteStore(req, res) {
 
 }
 
+async function savePaymentSettings(
+  req,
+  res
+) {
+
+  try {
+
+    const {
+      paystack_public_key,
+      paystack_secret_key,
+      stripe_public_key,
+      stripe_secret_key
+    } = req.body
+
+    const storeId =
+      req.body.store_id
+
+    const store =
+      await Store.findOne({
+        _id: storeId,
+        merchant_id: req.user.id
+      })
+
+    if (!store) {
+
+      return res.status(404).json({
+        error: "Store not found"
+      })
+
+    }
+
+    /*
+    SAVE KEYS
+    */
+
+    store.paystack_public_key =
+      paystack_public_key || ""
+
+    store.paystack_secret_key =
+      paystack_secret_key || ""
+
+    store.stripe_public_key =
+      stripe_public_key || ""
+
+    store.stripe_secret_key =
+      stripe_secret_key || ""
+
+    await store.save()
+
+    return res.json({
+
+      success: true,
+
+      message:
+        "Payment settings saved"
+
+    })
+
+  } catch (error) {
+
+    console.error(
+      "Save payment settings error:",
+      error.message
+    )
+
+    return res.status(500).json({
+
+      error:
+        "Failed to save payment settings"
+
+    })
+
+  }
+
+}
 
 
 module.exports = {
@@ -304,5 +379,6 @@ module.exports = {
   getStores,
   getStore,
   updateStore,
-  deleteStore
+  deleteStore,
+  savePaymentSettings
 }
