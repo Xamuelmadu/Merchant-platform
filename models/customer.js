@@ -1,5 +1,6 @@
 const mongoose = require("mongoose")
 
+
 const CustomerSchema = new mongoose.Schema({
 
   /*
@@ -18,25 +19,66 @@ const CustomerSchema = new mongoose.Schema({
 
   /*
   --------------------------------
+  EXTERNAL CUSTOMER ID
+  --------------------------------
+
+  Shopify / WooCommerce / other
+  platform customer identifier.
+  --------------------------------
+  */
+
+  external_id: {
+    type: String,
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  SOURCE PLATFORM
+  --------------------------------
+  */
+
+  source: {
+    type: String,
+
+    enum: [
+      "manual",
+      "shopify",
+      "woocommerce",
+      "whatsapp",
+      "custom"
+    ],
+
+    default: "manual",
+
+    index: true
+  },
+
+
+  /*
+  --------------------------------
   CUSTOMER INFO
   --------------------------------
   */
 
   name: {
     type: String,
-    trim: true
+    trim: true,
+    default: ""
   },
 
   phone: {
     type: String,
-    required: true,
-    trim: true
+    trim: true,
+    default: ""
   },
 
   email: {
     type: String,
     trim: true,
-    lowercase: true
+    lowercase: true,
+    default: ""
   },
 
 
@@ -51,16 +93,16 @@ const CustomerSchema = new mongoose.Schema({
     index: true
   },
 
-  last_message_at: {
-    type: Date
-  },
-
 
   /*
   --------------------------------
-  CUSTOMER METADATA
+  CUSTOMER ACTIVITY
   --------------------------------
   */
+
+  last_message_at: {
+    type: Date
+  },
 
   first_seen: {
     type: Date,
@@ -71,6 +113,13 @@ const CustomerSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+
+
+  /*
+  --------------------------------
+  CUSTOMER VALUE
+  --------------------------------
+  */
 
   total_orders: {
     type: Number,
@@ -85,7 +134,7 @@ const CustomerSchema = new mongoose.Schema({
 
   /*
   --------------------------------
-  CUSTOMER TAGGING (future CRM)
+  CUSTOMER TAGGING
   --------------------------------
   */
 
@@ -99,27 +148,70 @@ const CustomerSchema = new mongoose.Schema({
 })
 
 
-
 /*
---------------------------------
+================================
 INDEXES
---------------------------------
+================================
 */
+
 
 /*
-Prevent duplicate customers per store
+Store + source + external customer
+ID uniquely identifies an imported
+customer.
 */
-CustomerSchema.index(
-  { store_id: 1, phone: 1 },
-  { unique: true }
-)
+
+CustomerSchema.index({
+
+  store_id: 1,
+
+  source: 1,
+
+  external_id: 1
+
+}, {
+  unique: true,
+  sparse: true
+})
+
 
 /*
-Fast analytics queries
+Prevent duplicate manually-created
+customers by phone.
+
+Sparse allows Shopify customers
+without phone numbers.
 */
-CustomerSchema.index({ store_id: 1, total_spent: -1 })
-CustomerSchema.index({ store_id: 1, total_orders: -1 })
+
+CustomerSchema.index({
+
+  store_id: 1,
+
+  phone: 1
+
+}, {
+  unique: true,
+  sparse: true
+})
 
 
+/*
+Analytics.
+*/
 
-module.exports = mongoose.model("Customer", CustomerSchema)
+CustomerSchema.index({
+  store_id: 1,
+  total_spent: -1
+})
+
+CustomerSchema.index({
+  store_id: 1,
+  total_orders: -1
+})
+
+
+module.exports =
+  mongoose.model(
+    "Customer",
+    CustomerSchema
+  )

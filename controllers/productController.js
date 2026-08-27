@@ -333,6 +333,162 @@ async function syncShopify(req, res) {
   }
 }
 
+/*
+--------------------------------
+INTERNAL PRODUCT CATALOG
+--------------------------------
+
+Used by the AI Engine.
+
+This endpoint is not exposed
+through merchant authentication.
+
+It is protected by the internal
+AI Commerce platform key.
+--------------------------------
+*/
+
+async function getInternalProducts(req, res) {
+
+  try {
+
+    /*
+    --------------------------------
+    INTERNAL AUTH
+    --------------------------------
+    */
+
+    const platformKey =
+      req.headers["x-platform-key"]
+
+    if (
+      !process.env.AI_COMMERCE_PLATFORM_KEY ||
+      platformKey !==
+        process.env.AI_COMMERCE_PLATFORM_KEY
+    ) {
+
+      return res.status(401).json({
+
+        success: false,
+
+        error:
+          "Unauthorized platform request"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    STORE ID
+    --------------------------------
+    */
+
+    const storeId =
+      String(
+        req.query.store_id || ""
+      ).trim()
+
+
+    if (!storeId) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "store_id is required"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    VALIDATE STORE
+    --------------------------------
+    */
+
+    const store =
+      await Store.findById(
+        storeId
+      )
+
+
+    if (!store) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        error:
+          "Store not found"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    LOAD PRODUCTS
+    --------------------------------
+    */
+
+    const products =
+      await Product.find({
+
+        store_id:
+          store._id
+
+      })
+      .sort({
+        createdAt: -1
+      })
+      .lean()
+
+
+    /*
+    --------------------------------
+    RESPONSE
+    --------------------------------
+    */
+
+    return res.json({
+
+      success: true,
+
+      store_id:
+        String(
+          store._id
+        ),
+
+      products
+
+    })
+
+  } catch (error) {
+
+    console.error(
+      "Internal product catalog error:",
+      error.message
+    )
+
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        "Failed to fetch product catalog"
+
+    })
+
+  }
+
+}
 
 
 module.exports = {
@@ -343,5 +499,6 @@ module.exports = {
   deleteProduct,
   importProducts,
   syncWooCommerce,
-  syncShopify
+  syncShopify,
+  getInternalProducts
 }

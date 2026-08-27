@@ -1,16 +1,50 @@
 const express = require("express")
-const router = express.Router()
 
-const webhookController = require("../controllers/webhookController")
+const router =
+  express.Router()
+
+const webhookController =
+  require("../controllers/webhookController")
+
 
 /*
-Stripe Webhook
+--------------------------------
+STRIPE WEBHOOK
+--------------------------------
 */
-router.post("/stripe", webhookController.handleStripeWebhook)
+
+router.post(
+  "/stripe",
+  webhookController.handleStripeWebhook
+)
+
 
 /*
-Paystack Webhook
+--------------------------------
+PAYSTACK WEBHOOK
+--------------------------------
 */
-router.post("/paystack", webhookController.handlePaystackWebhook)
+
+router.post(
+  "/paystack",
+  webhookController.handlePaystackWebhook
+)
+
+
+/*
+--------------------------------
+SHOPIFY WEBHOOK
+--------------------------------
+
+Shopify requests are verified using
+the raw request body in the controller.
+--------------------------------
+*/
+
+router.post(
+  "/shopify",
+  webhookController.handleShopifyWebhook
+)
+
 
 module.exports = router

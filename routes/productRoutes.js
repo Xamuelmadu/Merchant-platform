@@ -61,6 +61,17 @@ router.get(
 )
 
 /*
+--------------------------------
+INTERNAL PRODUCT CATALOG
+--------------------------------
+*/
+
+router.get(
+  "/internal/catalog",
+  productController.getInternalProducts
+)
+
+/*
 Get single product
 */
 router.get(

@@ -8,12 +8,12 @@ const StoreSchema = new mongoose.Schema({
   --------------------------------
   */
 
-  merchant_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Merchant",
-    required: true,
-    index: true
-  },
+merchant_id: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  required: true,
+  index: true
+},
 
 
   /*
@@ -28,20 +28,136 @@ const StoreSchema = new mongoose.Schema({
     trim: true
   },
 
-  whatsapp_number: {
-  type: String,
-  trim: true
-},
-
-whatsapp_connected: {
-  type: Boolean,
-  default: false,
-  index: true
-},
-
   industry: {
     type: String,
     default: "ecommerce"
+  },
+
+
+  /*
+  --------------------------------
+  COMMERCE PLATFORM
+  --------------------------------
+  */
+
+  platform: {
+    type: String,
+    enum: [
+      "shopify",
+      "woocommerce",
+      "other"
+    ],
+    default: "other",
+    index: true
+  },
+
+  platform_connected: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+
+  platform_connection_status: {
+    type: String,
+    enum: [
+      "disconnected",
+      "connecting",
+      "connected",
+      "error"
+    ],
+    default: "disconnected",
+    index: true
+  },
+
+  platform_last_sync: {
+    type: Date
+  },
+
+  platform_sync_error: {
+    type: String
+  },
+
+
+  /*
+  --------------------------------
+  SHOPIFY INTEGRATION
+  --------------------------------
+  */
+
+  shopify: {
+
+    shop_id: {
+      type: String,
+      index: true
+    },
+
+    shop_domain: {
+      type: String,
+      index: true
+    },
+
+    access_token: {
+      type: String
+    },
+
+    connected: {
+      type: Boolean,
+      default: false
+    },
+
+    last_product_sync: {
+      type: Date
+    },
+
+    last_order_sync: {
+      type: Date
+    },
+
+    last_inventory_sync: {
+      type: Date
+    }
+
+  },
+
+
+  /*
+  --------------------------------
+  WOOCOMMERCE INTEGRATION
+  --------------------------------
+  */
+
+  woocommerce: {
+
+    store_url: {
+      type: String,
+      trim: true
+    },
+
+    consumer_key: {
+      type: String
+    },
+
+    consumer_secret: {
+      type: String
+    },
+
+    connected: {
+      type: Boolean,
+      default: false
+    },
+
+    last_product_sync: {
+      type: Date
+    },
+
+    last_order_sync: {
+      type: Date
+    },
+
+    last_inventory_sync: {
+      type: Date
+    }
+
   },
 
 
@@ -51,16 +167,26 @@ whatsapp_connected: {
   --------------------------------
   */
 
- plan: {
-  type: String,
-  enum: ["free", "basic", "pro", "premium"],
-  default: "free",
-  index: true
-},
+  plan: {
+    type: String,
+    enum: [
+      "free",
+      "basic",
+      "pro",
+      "premium"
+    ],
+    default: "free",
+    index: true
+  },
 
   subscription_status: {
     type: String,
-    enum: ["inactive", "active", "past_due", "cancelled"],
+    enum: [
+      "inactive",
+      "active",
+      "past_due",
+      "cancelled"
+    ],
     default: "inactive",
     index: true
   },
@@ -115,7 +241,7 @@ whatsapp_connected: {
 
   /*
   --------------------------------
-  STRIPE BILLING
+  STRIPE PLATFORM BILLING
   --------------------------------
   */
 
@@ -130,7 +256,7 @@ whatsapp_connected: {
 
   /*
   --------------------------------
-  PAYSTACK BILLING
+  PAYSTACK PLATFORM BILLING
   --------------------------------
   */
 
@@ -145,20 +271,69 @@ whatsapp_connected: {
 
   /*
   --------------------------------
-  MERCHANT PAYMENT KEYS
+  MERCHANT PAYMENT SETTINGS
   --------------------------------
   */
 
-  paystack_public_key: String,
-  paystack_secret_key: String,
+  paystack_public_key: {
+    type: String
+  },
 
-  stripe_public_key: String,
-  stripe_secret_key: String
+  paystack_secret_key: {
+    type: String
+  },
 
-},{
+  stripe_public_key: {
+    type: String
+  },
+
+  stripe_secret_key: {
+    type: String
+  },
+
+
+  /*
+  --------------------------------
+  WHATSAPP
+  --------------------------------
+  TEMPORARILY RETAINED
+  --------------------------------
+  */
+
+  whatsapp_number: {
+    type: String,
+    trim: true
+  },
+
+  whatsapp_connected: {
+    type: Boolean,
+    default: false,
+    index: true
+  }
+
+}, {
   timestamps: true
 })
 
+
+/*
+--------------------------------
+INDEXES
+--------------------------------
+*/
+
+StoreSchema.index({
+  merchant_id: 1,
+  platform: 1
+})
+
+StoreSchema.index({
+  "shopify.shop_domain": 1
+})
+
+StoreSchema.index({
+  "woocommerce.store_url": 1
+})
 
 
 module.exports = mongoose.model("Store", StoreSchema)

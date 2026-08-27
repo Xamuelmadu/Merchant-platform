@@ -1,38 +1,111 @@
 const passport = require("passport")
-const GoogleStrategy = require("passport-google-oauth20").Strategy
+const GoogleStrategy =
+  require("passport-google-oauth20").Strategy
 
 const User = require("../models/user")
 
-passport.use(new GoogleStrategy({
+const clientID =
+  process.env.GOOGLE_CLIENT_ID
 
-  clientID: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: `${process.env.BACKEND_URL}/api/auth/google/callback`
+const clientSecret =
+  process.env.GOOGLE_CLIENT_SECRET
 
-}, async (accessToken, refreshToken, profile, done) => {
+const backendURL =
+  process.env.BACKEND_URL
 
-  try{
 
-    let user = await User.findOne({
-      email: profile.emails[0].value
-    })
+/*
+--------------------------------
+GOOGLE OAUTH
+--------------------------------
+Only enable Google OAuth when
+credentials are configured.
+--------------------------------
+*/
 
-    if(!user){
+if (clientID && clientSecret && backendURL) {
 
-      user = await User.create({
-        name: profile.displayName,
-        email: profile.emails[0].value,
-        plan: "free"
-      })
+  passport.use(
+    new GoogleStrategy(
 
-    }
+      {
+        clientID,
 
-    return done(null, user)
+        clientSecret,
 
-  }catch(err){
+        callbackURL:
+          `${backendURL}/api/auth/google/callback`
+      },
 
-    return done(err, null)
+      async (
+        accessToken,
+        refreshToken,
+        profile,
+        done
+      ) => {
 
-  }
+        try {
 
-}))
+          const email =
+            profile.emails?.[0]?.value
+
+          if (!email) {
+
+            return done(
+              new Error(
+                "Google account has no email"
+              )
+            )
+
+          }
+
+          let user =
+            await User.findOne({
+              email
+            })
+
+          if (!user) {
+
+            user =
+              await User.create({
+
+                name:
+                  profile.displayName,
+
+                email,
+
+                plan: "free"
+
+              })
+
+          }
+
+          return done(null, user)
+
+        } catch (error) {
+
+          return done(
+            error,
+            null
+          )
+
+        }
+
+      }
+    )
+  )
+
+  console.log(
+    "✅ Google OAuth enabled"
+  )
+
+} else {
+
+  console.log(
+    "ℹ️ Google OAuth disabled: credentials not configured"
+  )
+
+}
+
+
+module.exports = passport

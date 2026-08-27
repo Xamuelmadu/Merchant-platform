@@ -4,6 +4,9 @@ const router = express.Router()
 const auth = require("../middleware/auth")
 const loadStore = require("../middleware/loadStore")
 
+const shopifyIntegration =
+  require("../middleware/shopifyIntegration")
+
 const storeController =
   require("../controllers/storeController")
 
@@ -15,6 +18,7 @@ STORE CREATION
 Used for onboarding + multi-store
 --------------------------------
 */
+
 router.post(
   "/create",
   auth,
@@ -24,9 +28,12 @@ router.post(
 
 /*
 --------------------------------
-GET ALL STORES (MULTI-STORE)
+GET ALL STORES
+--------------------------------
+Multi-store support
 --------------------------------
 */
+
 router.get(
   "/",
   auth,
@@ -36,9 +43,31 @@ router.get(
 
 /*
 --------------------------------
+SHOPIFY CONNECTION
+--------------------------------
+Used by the Shopify app after
+successful Shopify authentication.
+
+This route does not use the normal
+JWT auth middleware because the
+request originates from the
+authenticated Shopify app.
+--------------------------------
+*/
+
+router.post(
+  "/shopify/connect",
+  shopifyIntegration,
+  storeController.connectShopify
+)
+
+
+/*
+--------------------------------
 GET SINGLE STORE
 --------------------------------
 */
+
 router.get(
   "/:id",
   auth,
@@ -51,6 +80,7 @@ router.get(
 UPDATE STORE
 --------------------------------
 */
+
 router.patch(
   "/:id",
   auth,
@@ -64,6 +94,7 @@ router.patch(
 DELETE STORE
 --------------------------------
 */
+
 router.delete(
   "/:id",
   auth,
@@ -77,6 +108,7 @@ router.delete(
 STORE PAYMENT SETTINGS
 --------------------------------
 */
+
 router.post(
   "/payments",
   auth,

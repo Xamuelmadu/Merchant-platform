@@ -1,17 +1,44 @@
-const mongoose = require("mongoose")
+const express = require("express")
 
-const IntegrationSchema = new mongoose.Schema({
-  store_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Store"
-  },
+const router = express.Router()
 
-  provider: String,
+const auth = require("../middleware/auth")
+const loadStore = require("../middleware/loadStore")
 
-  credentials: Object
+const integrationController =
+  require("../controllers/integrationController")
 
-}, {
-  timestamps: true
-})
+/*
+--------------------------------
+PAYMENT SETTINGS
+--------------------------------
+*/
 
-module.exports = mongoose.model("Integration", IntegrationSchema)
+router.get(
+  "/payments",
+  auth,
+  loadStore,
+  integrationController.getPayments
+)
+
+router.post(
+  "/payments/update",
+  auth,
+  loadStore,
+  integrationController.updatePayments
+)
+
+
+/*
+--------------------------------
+SHOPIFY CONNECTION
+--------------------------------
+*/
+
+router.post(
+  "/shopify/connect",
+  integrationController.connectShopify
+)
+
+
+module.exports = router

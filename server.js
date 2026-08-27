@@ -27,6 +27,7 @@ const analyticsRoutes = require("./routes/analyticsRoutes")
 const billingRoutes = require("./routes/billingRoutes")
 const webhookRoutes = require("./routes/webhookRoutes")
 const integrationRoutes = require("./routes/integrationRoutes")
+const conversationRoutes = require("./routes/conversationRoutes")
 
 // Services
 const { runMonthlyBilling } = require("./services/billingEngine")
@@ -101,7 +102,37 @@ async function startServer() {
   --------------------------------
   */
 
-  app.use("/webhooks/stripe", express.raw({ type: "application/json" }))
+  /*
+--------------------------------
+STRIPE WEBHOOK RAW BODY
+--------------------------------
+*/
+
+app.use(
+  "/webhooks/stripe",
+  express.raw({
+    type: "application/json"
+  })
+)
+
+/*
+--------------------------------
+SHOPIFY WEBHOOK RAW BODY
+--------------------------------
+
+Shopify HMAC verification requires
+the original request body.
+
+This MUST run before express.json().
+--------------------------------
+*/
+
+app.use(
+  "/webhooks/shopify",
+  express.raw({
+    type: "application/json"
+  })
+)
 
   /*
   --------------------------------
@@ -127,6 +158,7 @@ async function startServer() {
   app.use("/api/billing", billingRoutes)
   app.use("/webhooks", webhookRoutes)
   app.use("/api/integrations", integrationRoutes)
+  app.use("/api/conversation", conversationRoutes)
 
   /*
   --------------------------------

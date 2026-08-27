@@ -23,6 +23,16 @@ router.post(
   orderController.createOrder
 )
 
+/*
+--------------------------------
+INTERNAL AI ORDER CREATION
+--------------------------------
+*/
+
+router.post(
+  "/internal/create",
+  orderController.createInternalOrder
+)
 
 
 /*
