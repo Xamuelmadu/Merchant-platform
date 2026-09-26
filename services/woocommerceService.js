@@ -1,1363 +1,1569 @@
-const Store = require("../models/store")
+const axios = require("axios")
 const Product = require("../models/product")
-const Order = require("../models/order")
-
-const { processPayment } =
-  require("../services/paymentRouter")
-
-const { sendWhatsAppMessage } =
-  require("../services/whatsappService")
-
-const { checkUsageLimit } =
-  require("../services/usageGuard")
-
-const { enforceSubscription } =
-  require("../services/subscriptionGuard")
-
-const {
-  createWooCommerceOrder
-} =
-  require("../services/woocommerceService")
-
 
 
 /*
 ================================
-CREATE ORDER
+WOOCOMMERCE SERVICE
+================================
+
+Handles:
+
+1. WooCommerce product sync
+2. WooCommerce product variants
+3. WooCommerce order creation
+
+Canonical product identity:
+
+store_id
++
+source
++
+external_id
 ================================
 */
 
-async function createOrder(req, res) {
 
-  try {
+/*
+================================
+NORMALIZE STORE URL
+================================
+*/
 
-    const {
-      product_id,
-      quantity = 1,
-      customer_name,
-      customer_phone,
-      customer_address,
-      gateway = "paystack"
-    } = req.body
+function normalizeStoreUrl(storeUrl) {
 
-
-    if (!product_id) {
-
-      return res.status(400).json({
-        error:
-          "product_id is required"
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    SUBSCRIPTION GUARD
-    --------------------------------
-    */
-
-    await enforceSubscription(
-      req.user.id
+  if (!storeUrl) {
+    throw new Error(
+      "WooCommerce store URL is required"
     )
+  }
+
+  return String(storeUrl)
+    .trim()
+    .replace(/\/+$/, "")
+}
 
 
-    /*
-    --------------------------------
-    PLAN LIMIT GUARD
-    --------------------------------
-    */
+/*
+================================
+CREATE WOOCOMMERCE CLIENT
+================================
+*/
 
-    const store =
-      await checkUsageLimit(
-        req.user.id
-      )
+function createWooClient(
+  storeUrl,
+  consumerKey,
+  consumerSecret
+) {
+
+  return axios.create({
+
+    baseURL:
+      `${normalizeStoreUrl(storeUrl)}/wp-json/wc/v3`,
+
+    timeout: 30000,
+
+    auth: {
+      username: consumerKey,
+      password: consumerSecret
+    },
+
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    }
+
+  })
+}
 
 
-    /*
-    --------------------------------
-    FIND PRODUCT
-    --------------------------------
-    */
+/*
+================================
+GET STORE CONFIG
+================================
+*/
 
-    const product =
-      await Product.findOne({
+function getWooConfig(store) {
 
-        _id:
-          product_id,
+  if (!store) {
+    throw new Error(
+      "Store is required"
+    )
+  }
 
-        store_id:
-          store._id
+  if (!store.woocommerce) {
+    throw new Error(
+      "WooCommerce configuration is missing"
+    )
+  }
 
-      })
+  const {
+    store_url,
+    consumer_key,
+    consumer_secret
+  } = store.woocommerce
+
+  if (!store_url) {
+    throw new Error(
+      "WooCommerce store URL is missing"
+    )
+  }
+
+  if (!consumer_key) {
+    throw new Error(
+      "WooCommerce consumer key is missing"
+    )
+  }
+
+  if (!consumer_secret) {
+    throw new Error(
+      "WooCommerce consumer secret is missing"
+    )
+  }
+
+  return {
+    storeUrl: normalizeStoreUrl(store_url),
+    consumerKey: consumer_key,
+    consumerSecret: consumer_secret
+  }
+}
 
 
-    if (!product) {
+/*
+================================
+NORMALIZE VARIANT
+================================
+*/
 
-      return res.status(404).json({
-        error:
-          "Product not found"
-      })
+function normalizeWooVariant(
+  variant
+) {
+
+  const attributes = {}
+
+  if (
+    Array.isArray(
+      variant.attributes
+    )
+  ) {
+
+    for (
+      const attribute
+      of variant.attributes
+    ) {
+
+      if (
+        attribute.name
+      ) {
+
+        attributes[
+          attribute.name
+        ] =
+          attribute.option || ""
+
+      }
 
     }
 
+  }
 
-    /*
-    --------------------------------
-    CALCULATE TOTALS
-    --------------------------------
-    */
+  const stock =
+    variant.stock_quantity !== null &&
+    variant.stock_quantity !== undefined
 
-    const total =
-      product.price *
-      quantity
+      ? Number(
+          variant.stock_quantity
+        )
 
-    const feeRate =
-      store.transaction_fee ??
-      0.007
-
-    const platformFee =
-      total *
-      feeRate
-
-    const merchantPayout =
-      total -
-      platformFee
+      : 0
 
 
-    /*
-    --------------------------------
-    CREATE ORDER
-    --------------------------------
-    */
+  return {
 
-    const order =
-      await Order.create({
+    external_id:
+      String(
+        variant.id
+      ),
 
-        store_id:
-          store._id,
+    title:
+      variant.name ||
+      "",
 
-        product_id,
+    sku:
+      variant.sku ||
+      "",
 
-        quantity,
+    price:
+      Number(
+        variant.price
+      ) || 0,
 
-        customer_name,
+    stock,
 
-        customer_phone,
+    available:
+      variant.stock_status === "instock" ||
+      stock > 0,
 
-        customer_address,
+    attributes
 
-        total_price:
-          total,
+  }
 
-        platform_fee:
-          platformFee,
-
-        merchant_payout:
-          merchantPayout,
-
-        payment_status:
-          "pending",
-
-        order_status:
-          "new"
-
-      })
+}
 
 
-    /*
-    --------------------------------
-    SEND WHATSAPP NOTIFICATION
-    --------------------------------
-    */
+/*
+================================
+FETCH PRODUCT VARIANTS
+================================
+*/
+
+async function fetchWooVariants(
+  client,
+  product
+) {
+
+  if (
+    !Array.isArray(
+      product.variations
+    ) ||
+    !product.variations.length
+  ) {
+
+    return []
+
+  }
+
+  const variants = []
+
+  let page = 1
+
+
+  /*
+  --------------------------------
+  FETCH ALL VARIATIONS
+  --------------------------------
+  */
+
+  while (true) {
+
+    let response
 
     try {
 
-      const message = `
-🛒 New Order
+      response =
+        await client.get(
 
-Customer: ${customer_name}
-Product: ${product.name}
-Quantity: ${quantity}
-Amount: ₦${total}
-Payment: Pending
-`
-
-      await sendWhatsAppMessage(
-
-        store.whatsapp_number,
-
-        message
-
-      )
-
-    } catch (err) {
-
-      console.error(
-        "WhatsApp notification failed:",
-        err.message
-      )
-
-    }
-
-
-    /*
-    --------------------------------
-    UPDATE STORE USAGE
-    --------------------------------
-    */
-
-    store.orders_used =
-      (store.orders_used || 0) + 1
-
-    await store.save()
-
-
-    /*
-    --------------------------------
-    PROCESS PAYMENT
-    --------------------------------
-    */
-
-    const payment =
-      await processPayment(
-        gateway,
-        order
-      )
-
-
-    /*
-    --------------------------------
-    SAVE PAYMENT REFERENCE
-    --------------------------------
-    */
-
-    order.payment_reference =
-      payment.reference
-
-    await order.save()
-
-
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
-
-    return res.json({
-
-      message:
-        "Order created successfully",
-
-      order,
-
-      payment_gateway:
-        gateway,
-
-      payment_link:
-        payment.payment_link
-
-    })
-
-
-  } catch (error) {
-
-    console.error(
-      "Create order error:",
-      error.message
-    )
-
-
-    return res.status(500).json({
-
-      error:
-        "Order creation failed",
-
-      details:
-        error.message
-
-    })
-
-  }
-
-}
-
-
-
-/*
-================================
-GET ALL ORDERS
-================================
-*/
-
-async function getOrders(req, res) {
-
-  try {
-
-    const store =
-      req.store
-
-
-    const orders =
-      await Order
-        .find({
-          store_id:
-            store._id
-        })
-        .populate(
-          "product_id"
-        )
-        .sort({
-          created_at:
-            -1
-        })
-
-
-    return res.json(
-      orders
-    )
-
-
-  } catch (error) {
-
-    return res.status(500).json({
-
-      error:
-        error.message
-
-    })
-
-  }
-
-}
-
-
-
-/*
-================================
-GET SINGLE ORDER
-================================
-*/
-
-async function getOrderById(
-  req,
-  res
-) {
-
-  try {
-
-    const store =
-      req.store
-
-
-    const order =
-      await Order
-        .findOne({
-
-          _id:
-            req.params.id,
-
-          store_id:
-            store._id
-
-        })
-        .populate(
-          "product_id"
-        )
-
-
-    if (!order) {
-
-      return res.status(404).json({
-
-        error:
-          "Order not found"
-
-      })
-
-    }
-
-
-    return res.json(
-      order
-    )
-
-
-  } catch (error) {
-
-    return res.status(500).json({
-
-      error:
-        error.message
-
-    })
-
-  }
-
-}
-
-
-
-/*
-================================
-UPDATE ORDER STATUS
-================================
-*/
-
-async function updateOrderStatus(
-  req,
-  res
-) {
-
-  try {
-
-    const {
-      status
-    } = req.body
-
-
-    const validStatuses = [
-
-      "new",
-
-      "paid",
-
-      "completed",
-
-      "cancelled"
-
-    ]
-
-
-    if (
-      !validStatuses.includes(
-        status
-      )
-    ) {
-
-      return res.status(400).json({
-
-        error:
-          "Invalid status"
-
-      })
-
-    }
-
-
-    const store =
-      req.store
-
-
-    const order =
-      await Order.findOne({
-
-        _id:
-          req.params.id,
-
-        store_id:
-          store._id
-
-      })
-
-
-    if (!order) {
-
-      return res.status(404).json({
-
-        error:
-          "Order not found"
-
-      })
-
-    }
-
-
-    order.order_status =
-      status
-
-
-    /*
-    --------------------------------
-    MARK PAYMENT AS PAID
-    --------------------------------
-    */
-
-    if (
-      status === "paid" ||
-      status === "completed"
-    ) {
-
-      order.payment_status =
-        "paid"
-
-    }
-
-
-    await order.save()
-
-
-    return res.json({
-
-      message:
-        "Order status updated",
-
-      order
-
-    })
-
-
-  } catch (error) {
-
-    return res.status(500).json({
-
-      error:
-        error.message
-
-    })
-
-  }
-
-}
-
-
-
-/*
-================================
-RECENT COMPLETED ORDERS
-================================
-*/
-
-async function getRecentOrders(
-  req,
-  res
-) {
-
-  try {
-
-    const store =
-      req.store
-
-
-    const orders =
-      await Order.find({
-
-        store_id:
-          store._id,
-
-        order_status:
-          "completed"
-
-      })
-      .sort({
-        created_at:
-          -1
-      })
-      .limit(20)
-
-
-    return res.json(
-      orders
-    )
-
-
-  } catch (error) {
-
-    return res.status(500).json({
-
-      error:
-        error.message
-
-    })
-
-  }
-
-}
-
-
-
-/*
-================================
-INTERNAL AI ORDER CREATION
-================================
-
-Used by the AI Engine.
-
-The AI Engine authenticates using:
-
-x-platform-key
-
-This endpoint creates the canonical
-Merchant Platform order and, when the
-source is WooCommerce, creates the
-corresponding WooCommerce order.
-================================
-*/
-
-async function createInternalOrder(
-  req,
-  res
-) {
-
-  try {
-
-    /*
-    --------------------------------
-    INTERNAL AUTH
-    --------------------------------
-    */
-
-    const platformKey =
-      req.headers[
-        "x-platform-key"
-      ]
-
-
-    if (
-      !process.env
-        .AI_COMMERCE_PLATFORM_KEY ||
-      platformKey !==
-        process.env
-          .AI_COMMERCE_PLATFORM_KEY
-    ) {
-
-      return res.status(401).json({
-
-        success:
-          false,
-
-        error:
-          "Unauthorized platform request"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    REQUEST DATA
-    --------------------------------
-    */
-
-    const {
-
-      store_id,
-
-      product_id,
-
-      quantity = 1,
-
-      customer_id,
-
-      external_customer_id,
-
-      customer_name = "",
-
-      customer_email = "",
-
-      customer_phone = "",
-
-      customer_address = "",
-
-      source = "custom",
-
-      gateway = "paystack"
-
-    } = req.body
-
-
-    /*
-    --------------------------------
-    VALIDATION
-    --------------------------------
-    */
-
-    if (!store_id) {
-
-      return res.status(400).json({
-
-        success:
-          false,
-
-        error:
-          "store_id is required"
-
-      })
-
-    }
-
-
-    if (!product_id) {
-
-      return res.status(400).json({
-
-        success:
-          false,
-
-        error:
-          "product_id is required"
-
-      })
-
-    }
-
-
-    const parsedQuantity =
-      Number(quantity)
-
-
-    if (
-      !Number.isInteger(
-        parsedQuantity
-      ) ||
-      parsedQuantity < 1
-    ) {
-
-      return res.status(400).json({
-
-        success:
-          false,
-
-        error:
-          "quantity must be a positive integer"
-
-      })
-
-    }
-
-
-    const validSources = [
-
-      "shopify",
-
-      "woocommerce",
-
-      "custom",
-
-      "manual"
-
-    ]
-
-
-    if (
-      !validSources.includes(
-        source
-      )
-    ) {
-
-      return res.status(400).json({
-
-        success:
-          false,
-
-        error:
-          "Invalid order source"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND STORE
-    --------------------------------
-    */
-
-    const store =
-      await Store.findById(
-        store_id
-      )
-
-
-    if (!store) {
-
-      return res.status(404).json({
-
-        success:
-          false,
-
-        error:
-          "Store not found"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND PRODUCT
-    --------------------------------
-    */
-
-    const product =
-      await Product.findOne({
-
-        _id:
-          product_id,
-
-        store_id:
-          store._id
-
-      })
-
-
-    if (!product) {
-
-      return res.status(404).json({
-
-        success:
-          false,
-
-        error:
-          "Product not found"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    INVENTORY CHECK
-    --------------------------------
-    */
-
-    if (
-      Number(product.stock) <
-      parsedQuantity
-    ) {
-
-      return res.status(400).json({
-
-        success:
-          false,
-
-        error:
-          "Insufficient product stock",
-
-        available_stock:
-          Number(product.stock)
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    WOOCOMMERCE CONNECTION CHECK
-    --------------------------------
-    */
-
-    if (
-      source ===
-      "woocommerce"
-    ) {
-
-      if (
-        store.platform !==
-        "woocommerce"
-      ) {
-
-        return res.status(400).json({
-
-          success:
-            false,
-
-          error:
-            "Store is not configured for WooCommerce"
-
-        })
-
-      }
-
-
-      if (
-        !store.platform_connected ||
-        !store.woocommerce?.connected
-      ) {
-
-        return res.status(400).json({
-
-          success:
-            false,
-
-          error:
-            "WooCommerce store is not connected"
-
-        })
-
-      }
-
-
-      if (
-        !store.woocommerce?.store_url ||
-        !store.woocommerce?.consumer_key ||
-        !store.woocommerce?.consumer_secret
-      ) {
-
-        return res.status(400).json({
-
-          success:
-            false,
-
-          error:
-            "WooCommerce connection credentials are missing"
-
-        })
-
-      }
-
-    }
-
-
-    /*
-    --------------------------------
-    CALCULATE TOTALS
-    --------------------------------
-    */
-
-    const unitPrice =
-      Number(
-        product.price
-      ) || 0
-
-
-    const subtotal =
-      unitPrice *
-      parsedQuantity
-
-
-    const total =
-      subtotal
-
-
-    const feeRate =
-      store.transaction_fee ??
-      0.007
-
-
-    const platformFee =
-      total *
-      feeRate
-
-
-    const merchantPayout =
-      total -
-      platformFee
-
-
-    /*
-    --------------------------------
-    CREATE CANONICAL ORDER
-    --------------------------------
-    */
-
-    const order =
-      await Order.create({
-
-        store_id:
-          store._id,
-
-        source,
-
-        customer_id:
-          customer_id ||
-          undefined,
-
-        external_customer_id:
-          external_customer_id ||
-          "",
-
-        customer_name:
-          customer_name ||
-          "",
-
-        customer_email:
-          customer_email ||
-          "",
-
-        customer_phone:
-          customer_phone ||
-          "",
-
-        customer_address:
-          customer_address ||
-          "",
-
-
-        items: [
+          `/products/${product.id}/variations`,
 
           {
-
-            product_id:
-              product._id,
-
-            external_product_id:
-              product.external_id ||
-              "",
-
-            name:
-              product.name,
-
-            quantity:
-              parsedQuantity,
-
-            unit_price:
-              unitPrice,
-
-            total_price:
-              subtotal
-
+            params: {
+              per_page: 100,
+              page
+            }
           }
 
-        ],
-
-
-        /*
-        Legacy compatibility
-        */
-
-        product_id:
-          product._id,
-
-        quantity:
-          parsedQuantity,
-
-        subtotal,
-
-        total_price:
-          total,
-
-        currency:
-          product.currency ||
-          "USD",
-
-        platform_fee:
-          platformFee,
-
-        merchant_payout:
-          merchantPayout,
-
-        payment_status:
-          "pending",
-
-        order_status:
-          "new",
-
-        ordered_at:
-          new Date()
-
-      })
-
-
-    /*
-    --------------------------------
-    CREATE WOOCOMMERCE ORDER
-    --------------------------------
-
-    Only WooCommerce orders are
-    pushed to WooCommerce.
-
-    The Merchant Platform order is
-    created first and acts as the
-    canonical order.
-    --------------------------------
-    */
-
-    let wooCommerceOrder =
-      null
-
-
-    if (
-      source ===
-      "woocommerce"
-    ) {
-
-      try {
-
-        wooCommerceOrder =
-          await createWooCommerceOrder({
-
-            store,
-
-            order
-
-          })
-
-
-        /*
-        --------------------------------
-        SAVE WOOCOMMERCE ORDER ID
-        --------------------------------
-        */
-
-        order.external_id =
-          String(
-            wooCommerceOrder.id
-          )
-
-
-        order.order_number =
-          String(
-            wooCommerceOrder.number ||
-            wooCommerceOrder.id
-          )
-
-
-        await order.save()
-
-
-        /*
-        --------------------------------
-        UPDATE WOOCOMMERCE SYNC TIME
-        --------------------------------
-        */
-
-        store.woocommerce
-          .last_order_sync =
-          new Date()
-
-        await store.save()
-
-
-      } catch (
-        wooError
-      ) {
-
-        console.error(
-
-          "WooCommerce order creation failed:",
-
-          wooError.response?.data ||
-          wooError.message
-
         )
 
+    } catch (error) {
 
-        /*
-        --------------------------------
-        DELETE ORPHAN ORDER
-        --------------------------------
-        */
+      const message =
+        error.response?.data?.message ||
+        error.message
 
-        await Order.deleteOne({
+      throw new Error(
 
-          _id:
-            order._id
-
-        })
-
-
-        return res.status(502).json({
-
-          success:
-            false,
-
-          error:
-            "Failed to create WooCommerce order",
-
-          details:
-            process.env.NODE_ENV ===
-            "production"
-
-              ? undefined
-
-              : wooError.message
-
-        })
-
-      }
-
-    }
-
-
-    /*
-    --------------------------------
-    UPDATE STORE USAGE
-    --------------------------------
-    */
-
-    store.orders_used =
-      (store.orders_used || 0) + 1
-
-    await store.save()
-
-
-    /*
-    --------------------------------
-    PROCESS PAYMENT
-    --------------------------------
-    */
-
-    let payment =
-      null
-
-
-    try {
-
-      payment =
-        await processPayment(
-
-          gateway,
-
-          order
-
-        )
-
-
-      /*
-      --------------------------------
-      SAVE PAYMENT REFERENCE
-      --------------------------------
-      */
-
-      if (
-        payment?.reference
-      ) {
-
-        order.payment_reference =
-          payment.reference
-
-        await order.save()
-
-      }
-
-
-    } catch (
-      paymentError
-    ) {
-
-      console.error(
-
-        "Internal order payment error:",
-
-        paymentError.message
+        `Failed to fetch variations for WooCommerce product ${product.id}: ${message}`
 
       )
 
+    }
 
-      /*
-      --------------------------------
-      PAYMENT FAILED
 
-      Keep the order because the
-      WooCommerce order already exists.
+    const pageVariants =
+      Array.isArray(
+        response.data
+      )
+        ? response.data
+        : []
 
-      Payment can be retried later.
-      --------------------------------
-      */
 
-      return res.status(201).json({
+    if (
+      !pageVariants.length
+    ) {
 
-        success:
-          true,
-
-        payment_required:
-          true,
-
-        payment_error:
-          paymentError.message,
-
-        order,
-
-        wooCommerceOrder
-
-      })
+      break
 
     }
 
 
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
+    for (
+      const variant
+      of pageVariants
+    ) {
 
-    return res.status(201).json({
+      variants.push(
+        normalizeWooVariant(
+          variant
+        )
+      )
 
-      success:
-        true,
-
-      message:
-        "Order created successfully",
-
-      order,
-
-      wooCommerceOrder,
-
-      payment_gateway:
-        gateway,
-
-      payment_link:
-        payment?.payment_link ||
-        payment?.authorization_url ||
-        null,
-
-      payment_reference:
-        payment?.reference ||
-        order.payment_reference ||
-        null
-
-    })
+    }
 
 
-  } catch (error) {
+    const totalPages =
+      Number(
+        response.headers[
+          "x-wp-totalpages"
+        ]
+      ) || 1
 
-    console.error(
 
-      "Internal order creation error:",
+    if (
+      page >= totalPages
+    ) {
 
-      error
+      break
+
+    }
+
+    page++
+
+  }
+
+
+  return variants
+}
+
+
+/*
+================================
+NORMALIZE PRODUCT
+================================
+*/
+
+async function normalizeWooProduct(
+  client,
+  product
+) {
+
+  const variants =
+    await fetchWooVariants(
+      client,
+      product
+    )
+
+
+  /*
+  --------------------------------
+  PRODUCT STOCK
+  --------------------------------
+  */
+
+  let stock = 0
+
+
+  if (
+    product.stock_quantity !== null &&
+    product.stock_quantity !== undefined
+  ) {
+
+    stock =
+      Number(
+        product.stock_quantity
+      ) || 0
+
+  }
+
+
+  /*
+  --------------------------------
+  VARIABLE PRODUCT STOCK
+  --------------------------------
+  */
+
+  if (
+    variants.length
+  ) {
+
+    stock =
+      variants.reduce(
+
+        (
+          total,
+          variant
+        ) =>
+          total +
+          (
+            Number(
+              variant.stock
+            ) || 0
+          ),
+
+        0
+
+      )
+
+  }
+
+
+  /*
+  --------------------------------
+  IMAGES
+  --------------------------------
+  */
+
+  const images =
+    Array.isArray(
+      product.images
+    )
+
+      ? product.images
+
+          .map(
+            image =>
+              image.src
+          )
+
+          .filter(
+            Boolean
+          )
+
+      : []
+
+
+  /*
+  --------------------------------
+  PRICE
+  --------------------------------
+  */
+
+  let price =
+    Number(
+      product.price
+    ) || 0
+
+
+  /*
+  --------------------------------
+  VARIABLE PRODUCT PRICE
+  --------------------------------
+  */
+
+  if (
+    variants.length
+  ) {
+
+    const prices =
+      variants
+
+        .map(
+          variant =>
+            Number(
+              variant.price
+            )
+        )
+
+        .filter(
+          value =>
+            Number.isFinite(
+              value
+            )
+        )
+
+
+    if (
+      prices.length
+    ) {
+
+      price =
+        Math.min(
+          ...prices
+        )
+
+    }
+
+  }
+
+
+  return {
+
+    external_id:
+      String(
+        product.id
+      ),
+
+    name:
+      product.name ||
+      "",
+
+    description:
+      product.description ||
+      "",
+
+    price,
+
+    currency:
+      product.currency ||
+      "USD",
+
+    stock,
+
+    images,
+
+    product_url:
+      product.permalink ||
+      "",
+
+    variants,
+
+    source:
+      "woocommerce"
+
+  }
+
+}
+
+/*
+================================
+SYNC SINGLE WOOCOMMERCE PRODUCT
+================================
+
+Used by WooCommerce webhooks.
+
+The webhook payload may contain
+variation IDs without the complete
+variation objects.
+
+Therefore we fetch the current
+product from WooCommerce and then
+fetch all of its variations.
+================================
+*/
+
+async function syncWooProduct(
+  store,
+  productId
+) {
+
+  if (!store) {
+
+    throw new Error(
+      "Store is required"
+    )
+
+  }
+
+
+  if (!productId) {
+
+    throw new Error(
+      "WooCommerce product ID is required"
+    )
+
+  }
+
+
+  const {
+    storeUrl,
+    consumerKey,
+    consumerSecret
+  } =
+    getWooConfig(
+      store
+    )
+
+
+  const client =
+    createWooClient(
+
+      storeUrl,
+
+      consumerKey,
+
+      consumerSecret
 
     )
 
 
-    return res.status(500).json({
+  /*
+  --------------------------------
+  FETCH CURRENT PRODUCT
+  --------------------------------
+  */
 
-      success:
-        false,
+  let response
 
-      error:
-        "Order creation failed",
+  try {
 
-      details:
-        process.env.NODE_ENV ===
-        "production"
+    response =
+      await client.get(
 
-          ? undefined
+        `/products/${encodeURIComponent(
+          productId
+        )}`
 
-          : error.message
+      )
 
-    })
+  } catch (error) {
+
+    const status =
+      error.response?.status
+
+    const message =
+      error.response?.data?.message ||
+      error.message
+
+
+    if (
+      status === 404
+    ) {
+
+      return {
+        deleted: true,
+        external_id:
+          String(productId)
+      }
+
+    }
+
+
+    throw new Error(
+
+      `Failed to fetch WooCommerce product ${productId}: ${message}`
+
+    )
+
+  }
+
+
+  const product =
+    response.data
+
+
+  if (
+    !product ||
+    !product.id
+  ) {
+
+    throw new Error(
+      "WooCommerce returned an invalid product"
+    )
+
+  }
+
+
+  /*
+  --------------------------------
+  NORMALIZE WITH FULL VARIATIONS
+  --------------------------------
+  */
+
+  const normalized =
+    await normalizeWooProduct(
+
+      client,
+
+      product
+
+    )
+
+
+  /*
+  --------------------------------
+  UPSERT CANONICAL PRODUCT
+  --------------------------------
+  */
+
+  const saved =
+    await Product.findOneAndUpdate(
+
+      {
+
+        store_id:
+          store._id,
+
+        source:
+          "woocommerce",
+
+        external_id:
+          normalized.external_id
+
+      },
+
+      {
+
+        $set: {
+
+          store_id:
+            store._id,
+
+          external_id:
+            normalized.external_id,
+
+          name:
+            normalized.name,
+
+          description:
+            normalized.description,
+
+          price:
+            normalized.price,
+
+          currency:
+            normalized.currency,
+
+          stock:
+            normalized.stock,
+
+          images:
+            normalized.images,
+
+          product_url:
+            normalized.product_url,
+
+          variants:
+            normalized.variants,
+
+          source:
+            "woocommerce"
+
+        }
+
+      },
+
+      {
+
+        upsert:
+          true,
+
+        new:
+          true,
+
+        setDefaultsOnInsert:
+          true
+
+      }
+
+    )
+
+
+  return {
+
+    deleted:
+      false,
+
+    product:
+      saved
+
+  }
+
+}
+
+/*
+================================
+SYNC WOOCOMMERCE PRODUCTS
+================================
+*/
+
+async function syncWooProducts(
+
+  storeId,
+
+  storeUrl,
+
+  consumerKey,
+
+  consumerSecret
+
+) {
+
+  if (!storeId) {
+
+    throw new Error(
+      "storeId is required"
+    )
+
+  }
+
+  if (!consumerKey) {
+
+    throw new Error(
+      "WooCommerce consumer key is required"
+    )
+
+  }
+
+  if (!consumerSecret) {
+
+    throw new Error(
+      "WooCommerce consumer secret is required"
+    )
+
+  }
+
+
+  const client =
+    createWooClient(
+
+      storeUrl,
+
+      consumerKey,
+
+      consumerSecret
+
+    )
+
+
+  let page = 1
+
+  let processed = 0
+
+  let created = 0
+
+  let updated = 0
+
+
+  /*
+  --------------------------------
+  FETCH PRODUCTS
+  --------------------------------
+  */
+
+  while (true) {
+
+    let response
+
+    try {
+
+      response =
+        await client.get(
+
+          "/products",
+
+          {
+            params: {
+
+              per_page: 100,
+
+              page
+
+            }
+          }
+
+        )
+
+    } catch (error) {
+
+      const message =
+        error.response?.data?.message ||
+        error.message
+
+      console.error(
+        "WooCommerce product API error:",
+        message
+      )
+
+      throw new Error(
+        `WooCommerce product synchronization failed: ${message}`
+      )
+
+    }
+
+
+    const products =
+      Array.isArray(
+        response.data
+      )
+        ? response.data
+        : []
+
+
+    if (
+      !products.length
+    ) {
+
+      break
+
+    }
+
+
+    /*
+    --------------------------------
+    PROCESS PRODUCTS
+    --------------------------------
+    */
+
+    for (
+      const product
+      of products
+    ) {
+
+      if (
+        !product.id
+      ) {
+
+        continue
+
+      }
+
+
+      const normalized =
+        await normalizeWooProduct(
+
+          client,
+
+          product
+
+        )
+
+
+      /*
+      --------------------------------
+      FIND EXISTING PRODUCT
+      --------------------------------
+      */
+
+      const existing =
+        await Product.findOne({
+
+          store_id:
+            storeId,
+
+          source:
+            "woocommerce",
+
+          external_id:
+            normalized.external_id
+
+        })
+
+
+      /*
+      --------------------------------
+      UPDATE
+      --------------------------------
+      */
+
+      if (
+        existing
+      ) {
+
+        existing.name =
+          normalized.name
+
+        existing.description =
+          normalized.description
+
+        existing.price =
+          normalized.price
+
+        existing.currency =
+          normalized.currency
+
+        existing.stock =
+          normalized.stock
+
+        existing.images =
+          normalized.images
+
+        existing.product_url =
+          normalized.product_url
+
+        existing.variants =
+          normalized.variants
+
+        await existing.save()
+
+        updated++
+
+      }
+
+
+      /*
+      --------------------------------
+      CREATE
+      --------------------------------
+      */
+
+      else {
+
+        await Product.create({
+
+          store_id:
+            storeId,
+
+          external_id:
+            normalized.external_id,
+
+          name:
+            normalized.name,
+
+          description:
+            normalized.description,
+
+          price:
+            normalized.price,
+
+          currency:
+            normalized.currency,
+
+          stock:
+            normalized.stock,
+
+          images:
+            normalized.images,
+
+          product_url:
+            normalized.product_url,
+
+          variants:
+            normalized.variants,
+
+          source:
+            "woocommerce"
+
+        })
+
+        created++
+
+      }
+
+
+      processed++
+
+    }
+
+
+    /*
+    --------------------------------
+    PAGINATION
+    --------------------------------
+    */
+
+    const totalPages =
+      Number(
+        response.headers[
+          "x-wp-totalpages"
+        ]
+      ) || 1
+
+
+    if (
+      page >= totalPages
+    ) {
+
+      break
+
+    }
+
+    page++
+
+  }
+
+
+  console.log(
+
+    `WooCommerce sync complete: ${processed} processed, ${created} created, ${updated} updated`
+
+  )
+
+
+  return {
+
+    synced:
+      processed,
+
+    created,
+
+    updated
 
   }
 
 }
 
 
+/*
+================================
+CREATE WOOCOMMERCE ORDER
+================================
+*/
+
+async function createWooCommerceOrder({
+
+  store,
+
+  order
+
+}) {
+
+  if (!store) {
+
+    throw new Error(
+      "Store is required"
+    )
+
+  }
+
+  if (!order) {
+
+    throw new Error(
+      "Order is required"
+    )
+
+  }
+
+
+  const {
+    storeUrl,
+    consumerKey,
+    consumerSecret
+  } =
+    getWooConfig(
+      store
+    )
+
+
+  const client =
+    createWooClient(
+
+      storeUrl,
+
+      consumerKey,
+
+      consumerSecret
+
+    )
+
+
+  /*
+  --------------------------------
+  BUILD LINE ITEMS
+  --------------------------------
+  */
+
+  const lineItems = []
+
+
+  if (
+    Array.isArray(
+      order.items
+    ) &&
+    order.items.length
+  ) {
+
+    for (
+      const item
+      of order.items
+    ) {
+
+      let productId =
+        item.external_product_id ||
+        item.product_external_id ||
+        ""
+
+
+      let variationId =
+        item.external_variant_id ||
+        ""
+
+
+      /*
+      --------------------------------
+      FALLBACK TO INTERNAL PRODUCT
+      --------------------------------
+      */
+
+      if (
+        !productId &&
+        item.product_id
+      ) {
+
+        const product =
+          await Product.findById(
+            item.product_id
+          )
+
+
+        if (
+          product
+        ) {
+
+          productId =
+            product.external_id
+
+        }
+
+      }
+
+
+      if (
+        !productId
+      ) {
+
+        throw new Error(
+
+          `WooCommerce product ID missing for ${item.name || "order item"}`
+
+        )
+
+      }
+
+
+      const lineItem = {
+
+        product_id:
+          Number(
+            productId
+          ),
+
+        quantity:
+          Number(
+            item.quantity
+          ) || 1
+
+      }
+
+
+      /*
+      --------------------------------
+      VARIATION
+      --------------------------------
+      */
+
+      if (
+        variationId
+      ) {
+
+        lineItem.variation_id =
+          Number(
+            variationId
+          )
+
+      }
+
+
+      lineItems.push(
+        lineItem
+      )
+
+    }
+
+  }
+
+
+  /*
+  --------------------------------
+  LEGACY SINGLE PRODUCT
+  --------------------------------
+  */
+
+  else if (
+    order.product_id
+  ) {
+
+    const product =
+      await Product.findById(
+        order.product_id
+      )
+
+
+    if (
+      !product
+    ) {
+
+      throw new Error(
+        "Order product not found"
+      )
+
+    }
+
+
+    if (
+      !product.external_id
+    ) {
+
+      throw new Error(
+        "WooCommerce product ID missing"
+      )
+
+    }
+
+
+    lineItems.push({
+
+      product_id:
+        Number(
+          product.external_id
+        ),
+
+      quantity:
+        Number(
+          order.quantity
+        ) || 1
+
+    })
+
+  }
+
+
+  if (
+    !lineItems.length
+  ) {
+
+    throw new Error(
+      "WooCommerce order contains no products"
+    )
+
+  }
+
+
+  /*
+  --------------------------------
+  BILLING
+  --------------------------------
+  */
+
+  const billing = {
+
+    first_name:
+      order.customer_name ||
+      "Customer",
+
+    last_name:
+      "",
+
+    email:
+      order.customer_email ||
+      "",
+
+    phone:
+      order.customer_phone ||
+      "",
+
+    address_1:
+      order.customer_address ||
+      "",
+
+    address_2:
+      "",
+
+    city:
+      "",
+
+    state:
+      "",
+
+    postcode:
+      "",
+
+    country:
+      ""
+
+  }
+
+
+  /*
+  --------------------------------
+  SHIPPING
+  --------------------------------
+  */
+
+  const shipping = {
+
+    first_name:
+      order.customer_name ||
+      "Customer",
+
+    last_name:
+      "",
+
+    address_1:
+      order.customer_address ||
+      "",
+
+    address_2:
+      "",
+
+    city:
+      "",
+
+    state:
+      "",
+
+    postcode:
+      "",
+
+    country:
+      ""
+
+  }
+
+
+  /*
+  --------------------------------
+  WOOCOMMERCE ORDER PAYLOAD
+  --------------------------------
+  */
+
+  const payload = {
+
+    status:
+      "pending",
+
+    payment_method:
+      order.payment_method ||
+      "ai_commerce",
+
+    payment_method_title:
+      order.payment_method_title ||
+      "AI Commerce",
+
+    set_paid:
+      false,
+
+    billing,
+
+    shipping,
+
+    line_items:
+      lineItems,
+
+    customer_note:
+      "Order created through AI Commerce.",
+
+    meta_data: [
+
+      {
+
+        key:
+          "_ai_commerce_order_id",
+
+        value:
+          String(
+            order._id
+          )
+
+      },
+
+      {
+
+        key:
+          "_ai_commerce_source",
+
+        value:
+          "ai_commerce"
+
+      }
+
+    ]
+
+  }
+
+
+  /*
+  --------------------------------
+  CREATE ORDER
+  --------------------------------
+  */
+
+  let response
+
+  try {
+
+    response =
+      await client.post(
+
+        "/orders",
+
+        payload
+
+      )
+
+  } catch (error) {
+
+    const message =
+      error.response?.data?.message ||
+      error.message
+
+    console.error(
+
+      "WooCommerce order creation error:",
+
+      error.response?.data ||
+      error.message
+
+    )
+
+    throw new Error(
+
+      `WooCommerce order creation failed: ${message}`
+
+    )
+
+  }
+
+
+  if (
+    !response.data ||
+    !response.data.id
+  ) {
+
+    throw new Error(
+      "WooCommerce returned an invalid order response"
+    )
+
+  }
+
+
+  /*
+  --------------------------------
+  RETURN RESULT
+  --------------------------------
+  */
+
+  return {
+
+    id:
+      response.data.id,
+
+    order_number:
+      response.data.number ||
+      String(
+        response.data.id
+      ),
+
+    status:
+      response.data.status,
+
+    payment_status:
+      response.data.payment_status,
+
+    total:
+      response.data.total,
+
+    currency:
+      response.data.currency,
+
+    raw:
+      response.data
+
+  }
+
+}
+
 
 /*
 ================================
-EXPORTS
+MODULE EXPORTS
 ================================
 */
 
 module.exports = {
 
-  createOrder,
+  syncWooProducts,
 
-  createInternalOrder,
+  syncWooProduct,
 
-  getOrders,
-
-  getOrderById,
-
-  updateOrderStatus,
-
-  getRecentOrders
+  createWooCommerceOrder
 
 }

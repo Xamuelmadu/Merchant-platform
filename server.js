@@ -134,6 +134,23 @@ app.use(
   })
 )
 
+/*
+--------------------------------
+WOOCOMMERCE WEBHOOK RAW BODY
+--------------------------------
+WooCommerce webhook signatures
+must be calculated against the
+original request body.
+--------------------------------
+*/
+
+app.use(
+  "/webhooks/woocommerce",
+  express.raw({
+    type: "application/json"
+  })
+)
+
   /*
   --------------------------------
   BODY PARSER

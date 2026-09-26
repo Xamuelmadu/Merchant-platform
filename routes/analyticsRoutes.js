@@ -1,10 +1,15 @@
 const express = require("express")
+
 const router = express.Router()
 
 const auth = require("../middleware/auth")
+
 const loadStore = require("../middleware/loadStore")
 
-const { getFinancialSummary } = require("../controllers/analyticscontroller")
+const {
+  getFinancialSummary
+} = require("../controllers/analyticscontroller")
+
 
 router.get(
   "/financial-summary",
@@ -12,5 +17,6 @@ router.get(
   loadStore,
   getFinancialSummary
 )
+
 
 module.exports = router

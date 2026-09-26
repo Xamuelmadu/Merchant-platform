@@ -12,13 +12,45 @@ const { enforceSubscription } = require("../services/subscriptionGuard")
 
 /*
 --------------------------------
+STORE CURRENCY HELPER
+--------------------------------
+
+The Store is the canonical owner
+of the currency used for commerce.
+
+Orders copy the Store currency at
+the time the order is created.
+
+This preserves historical financial
+accuracy if the store currency is
+changed later.
+--------------------------------
+*/
+
+function getStoreCurrency(store) {
+
+  return (
+    String(
+      store?.currency ||
+      "USD"
+    )
+      .trim()
+      .toUpperCase()
+  )
+
+}
+
+
+
+/*
+--------------------------------
 CREATE ORDER
 --------------------------------
 */
 
-async function createOrder(req,res){
+async function createOrder(req, res) {
 
-  try{
+  try {
 
     const {
       product_id,
@@ -30,10 +62,12 @@ async function createOrder(req,res){
     } = req.body
 
 
-    if(!product_id){
+    if (!product_id) {
+
       return res.status(400).json({
-        error:"product_id is required"
+        error: "product_id is required"
       })
+
     }
 
 
@@ -43,17 +77,21 @@ async function createOrder(req,res){
     --------------------------------
     */
 
-    await enforceSubscription(req.user.id)
+    await enforceSubscription(
+      req.user.id
+    )
 
 
     /*
     --------------------------------
-    PLAN LIMIT GUARD (FREE PLAN 20)
+    PLAN LIMIT GUARD
     --------------------------------
     */
 
-    const store = await checkUsageLimit(req.user.id)
-
+    const store =
+      await checkUsageLimit(
+        req.user.id
+      )
 
 
     /*
@@ -62,17 +100,38 @@ async function createOrder(req,res){
     --------------------------------
     */
 
-    const product = await Product.findOne({
-      _id:product_id,
-      store_id:store._id
-    })
+    const product =
+      await Product.findOne({
 
-    if(!product){
-      return res.status(404).json({
-        error:"Product not found"
+        _id: product_id,
+
+        store_id: store._id
+
       })
+
+
+    if (!product) {
+
+      return res.status(404).json({
+        error: "Product not found"
+      })
+
     }
 
+
+    /*
+    --------------------------------
+    CURRENCY
+    --------------------------------
+
+    The Store owns the currency.
+
+    Do not use product.currency here.
+    --------------------------------
+    */
+
+    const currency =
+      getStoreCurrency(store)
 
 
     /*
@@ -81,13 +140,22 @@ async function createOrder(req,res){
     --------------------------------
     */
 
-    const total = product.price * quantity
+    const total =
+      Number(product.price || 0) *
+      Number(quantity || 1)
 
-    const feeRate = store.transaction_fee ?? 0.007
 
-    const platformFee = total * feeRate
+    const feeRate =
+      store.transaction_fee ??
+      0.007
 
-    const merchantPayout = total - platformFee
+
+    const platformFee =
+      total * feeRate
+
+
+    const merchantPayout =
+      total - platformFee
 
 
 
@@ -97,30 +165,57 @@ async function createOrder(req,res){
     --------------------------------
     */
 
-    const order = await Order.create({
+    const order =
+      await Order.create({
 
-      store_id:store._id,
-      product_id,
-      quantity,
-      customer_name,
-      customer_phone,
-      customer_address,
+        store_id:
+          store._id,
 
-      total_price:total,
-      platform_fee:platformFee,
-      merchant_payout:merchantPayout,
+        source:
+          "manual",
 
-      payment_status:"pending",
+        product_id,
 
-      /*
-      order_status flow
-      new → paid → completed
-      */
+        quantity,
 
-      order_status:"new"
+        customer_name,
 
-    })
+        customer_phone,
 
+        customer_address,
+
+        subtotal:
+          total,
+
+        total_price:
+          total,
+
+        /*
+        Currency is captured at the
+        moment the order is created.
+        */
+
+        currency,
+
+        platform_fee:
+          platformFee,
+
+        merchant_payout:
+          merchantPayout,
+
+        payment_status:
+          "pending",
+
+        /*
+        order_status flow:
+
+        new → paid → completed
+        */
+
+        order_status:
+          "new"
+
+      })
 
 
     /*
@@ -129,7 +224,7 @@ async function createOrder(req,res){
     --------------------------------
     */
 
-    try{
+    try {
 
       const message = `
 🛒 New Order
@@ -137,7 +232,7 @@ async function createOrder(req,res){
 Customer: ${customer_name}
 Product: ${product.name}
 Quantity: ${quantity}
-Amount: ₦${total}
+Amount: ${currency} ${total}
 Payment: Pending
 `
 
@@ -146,12 +241,14 @@ Payment: Pending
         message
       )
 
-    }catch(err){
+    } catch (err) {
 
-      console.error("WhatsApp notification failed:",err.message)
+      console.error(
+        "WhatsApp notification failed:",
+        err.message
+      )
 
     }
-
 
 
     /*
@@ -160,10 +257,10 @@ Payment: Pending
     --------------------------------
     */
 
-    store.orders_used += 1
+    store.orders_used =
+      (store.orders_used || 0) + 1
 
     await store.save()
-
 
 
     /*
@@ -172,8 +269,11 @@ Payment: Pending
     --------------------------------
     */
 
-    const payment = await processPayment(gateway, order)
-
+    const payment =
+      await processPayment(
+        gateway,
+        order
+      )
 
 
     /*
@@ -182,34 +282,49 @@ Payment: Pending
     --------------------------------
     */
 
-    order.payment_reference = payment.reference
+    order.payment_reference =
+      payment.reference
 
     await order.save()
 
 
+    /*
+    --------------------------------
+    RESPONSE
+    --------------------------------
+    */
 
-    res.json({
+    return res.json({
 
-      message:"Order created successfully",
+      message:
+        "Order created successfully",
 
       order,
 
-      payment_gateway:gateway,
+      payment_gateway:
+        gateway,
 
-      payment_link:payment.payment_link
+      payment_link:
+        payment.payment_link
 
     })
 
 
-  }catch(error){
+  } catch (error) {
 
-    console.error("Create order error:",error.message)
+    console.error(
+      "Create order error:",
+      error.message
+    )
 
-    res.status(500).json({
 
-      error:"Order creation failed",
+    return res.status(500).json({
 
-      details:error.message
+      error:
+        "Order creation failed",
+
+      details:
+        error.message
 
     })
 
@@ -225,24 +340,37 @@ GET ALL ORDERS
 --------------------------------
 */
 
-async function getOrders(req,res){
+async function getOrders(req, res) {
 
-  try{
+  try {
 
-    const store = req.store
-
-    const orders = await Order
-      .find({ store_id:store._id })
-      .populate("product_id")
-      .sort({ created_at:-1 })
+    const store =
+      req.store
 
 
-    res.json(orders)
+    const orders =
+      await Order
+        .find({
+          store_id: store._id
+        })
+        .populate("product_id")
+        .sort({
+          created_at: -1
+        })
 
-  }catch(error){
 
-    res.status(500).json({
-      error:error.message
+    return res.json(
+      orders
+    )
+
+
+  } catch (error) {
+
+    return res.status(500).json({
+
+      error:
+        error.message
+
     })
 
   }
@@ -257,33 +385,52 @@ GET SINGLE ORDER
 --------------------------------
 */
 
-async function getOrderById(req,res){
+async function getOrderById(req, res) {
 
-  try{
+  try {
 
-    const store = req.store
-
-    const order = await Order
-      .findOne({
-        _id:req.params.id,
-        store_id:store._id
-      })
-      .populate("product_id")
+    const store =
+      req.store
 
 
-    if(!order){
+    const order =
+      await Order
+        .findOne({
+
+          _id:
+            req.params.id,
+
+          store_id:
+            store._id
+
+        })
+        .populate("product_id")
+
+
+    if (!order) {
+
       return res.status(404).json({
-        error:"Order not found"
+
+        error:
+          "Order not found"
+
       })
+
     }
 
 
-    res.json(order)
+    return res.json(
+      order
+    )
 
-  }catch(error){
 
-    res.status(500).json({
-      error:error.message
+  } catch (error) {
+
+    return res.status(500).json({
+
+      error:
+        error.message
+
     })
 
   }
@@ -296,66 +443,131 @@ async function getOrderById(req,res){
 --------------------------------
 UPDATE ORDER STATUS
 --------------------------------
+
 Used for:
+
 - admin completion
 - bank transfer confirmation
+
+The order is explicitly scoped to
+the authenticated merchant's store.
 --------------------------------
 */
 
-async function updateOrderStatus(req,res){
+async function updateOrderStatus(req, res) {
 
-  try{
+  try {
 
-    const { status } = req.body
+    const {
+      status
+    } = req.body
+
 
     const validStatuses = [
+
       "new",
       "paid",
       "completed",
       "cancelled"
+
     ]
 
-    if(!validStatuses.includes(status)){
+
+    if (
+      !validStatuses.includes(
+        status
+      )
+    ) {
+
       return res.status(400).json({
-        error:"Invalid status"
+
+        error:
+          "Invalid status"
+
       })
+
     }
 
 
-    const order = await Order.findById(req.params.id)
+    const store =
+      req.store
 
-    if(!order){
-      return res.status(404).json({
-        error:"Order not found"
-      })
-    }
-
-
-    order.order_status = status
 
     /*
-    mark payment if completed
+    --------------------------------
+    STORE-SCOPED LOOKUP
+    --------------------------------
     */
 
-    if(status === "completed"){
-      order.payment_status = "paid"
+    const order =
+      await Order.findOne({
+
+        _id:
+          req.params.id,
+
+        store_id:
+          store._id
+
+      })
+
+
+    if (!order) {
+
+      return res.status(404).json({
+
+        error:
+          "Order not found"
+
+      })
+
     }
+
+
+    order.order_status =
+      status
+
+
+    /*
+    --------------------------------
+    PAYMENT STATUS
+    --------------------------------
+
+    Completed orders are considered
+    paid.
+
+    --------------------------------
+    */
+
+    if (
+      status === "completed"
+    ) {
+
+      order.payment_status =
+        "paid"
+
+    }
+
 
     await order.save()
 
 
-    res.json({
+    return res.json({
 
-      message:"Order status updated",
+      message:
+        "Order status updated",
 
       order
 
     })
 
-  }catch(error){
 
-    res.status(500).json({
-      error:error.message
+  } catch (error) {
+
+    return res.status(500).json({
+
+      error:
+        error.message
+
     })
 
   }
@@ -368,42 +580,57 @@ async function updateOrderStatus(req,res){
 --------------------------------
 RECENT COMPLETED ORDERS
 --------------------------------
-Used by financial dashboard
+
+Used by the financial dashboard.
+
+Only completed orders count as
+realized revenue.
 --------------------------------
 */
 
-async function getRecentOrders(req,res){
+async function getRecentOrders(req, res) {
 
-  try{
+  try {
 
-    const store = req.store
-
-    const orders = await Order.find({
-
-      store_id:store._id,
-
-      /*
-      Only completed orders count as revenue
-      */
-
-      order_status:"completed"
-
-    })
-    .sort({ created_at:-1 })
-    .limit(20)
+    const store =
+      req.store
 
 
-    res.json(orders)
+    const orders =
+      await Order.find({
 
-  }catch(error){
+        store_id:
+          store._id,
 
-    res.status(500).json({
-      error:error.message
+        order_status:
+          "completed"
+
+      })
+      .sort({
+        created_at: -1
+      })
+      .limit(20)
+
+
+    return res.json(
+      orders
+    )
+
+
+  } catch (error) {
+
+    return res.status(500).json({
+
+      error:
+        error.message
+
     })
 
   }
 
 }
+
+
 
 /*
 --------------------------------
@@ -421,7 +648,10 @@ inside the Merchant Platform.
 --------------------------------
 */
 
-async function createInternalOrder(req, res) {
+async function createInternalOrder(
+  req,
+  res
+) {
 
   try {
 
@@ -432,12 +662,17 @@ async function createInternalOrder(req, res) {
     */
 
     const platformKey =
-      req.headers["x-platform-key"]
+      req.headers[
+        "x-platform-key"
+      ]
+
 
     if (
-      !process.env.AI_COMMERCE_PLATFORM_KEY ||
+      !process.env
+        .AI_COMMERCE_PLATFORM_KEY ||
       platformKey !==
-        process.env.AI_COMMERCE_PLATFORM_KEY
+        process.env
+          .AI_COMMERCE_PLATFORM_KEY
     ) {
 
       return res.status(401).json({
@@ -543,10 +778,12 @@ async function createInternalOrder(req, res) {
 
 
     const validSources = [
+
       "shopify",
       "woocommerce",
       "custom",
       "manual"
+
     ]
 
 
@@ -592,6 +829,18 @@ async function createInternalOrder(req, res) {
       })
 
     }
+
+
+    /*
+    --------------------------------
+    CANONICAL STORE CURRENCY
+    --------------------------------
+    */
+
+    const currency =
+      getStoreCurrency(
+        store
+      )
 
 
     /*
@@ -688,7 +937,7 @@ async function createInternalOrder(req, res) {
 
     /*
     --------------------------------
-    CREATE ORDER
+    CREATE CANONICAL ORDER
     --------------------------------
     */
 
@@ -701,7 +950,8 @@ async function createInternalOrder(req, res) {
         source,
 
         customer_id:
-          customer_id || undefined,
+          customer_id ||
+          undefined,
 
         external_customer_id:
           external_customer_id ||
@@ -742,8 +992,11 @@ async function createInternalOrder(req, res) {
 
         ],
 
+
         /*
-        Legacy compatibility
+        --------------------------------
+        LEGACY COMPATIBILITY
+        --------------------------------
         */
 
         product_id:
@@ -757,15 +1010,28 @@ async function createInternalOrder(req, res) {
         total_price:
           total,
 
-        currency:
-          product.currency ||
-          "USD",
+
+        /*
+        --------------------------------
+        FINANCIAL CURRENCY
+        --------------------------------
+
+        The Store is authoritative.
+
+        The Product currency is not used
+        to determine the order currency.
+        --------------------------------
+        */
+
+        currency,
+
 
         platform_fee:
           platformFee,
 
         merchant_payout:
           merchantPayout,
+
 
         payment_status:
           "pending",
@@ -820,12 +1086,15 @@ async function createInternalOrder(req, res) {
 
       }
 
-    } catch (paymentError) {
+    } catch (
+      paymentError
+    ) {
 
       console.error(
         "Internal order payment error:",
         paymentError.message
       )
+
 
       /*
       Keep the order.
@@ -881,6 +1150,7 @@ async function createInternalOrder(req, res) {
 
     })
 
+
   } catch (error) {
 
     console.error(
@@ -897,7 +1167,8 @@ async function createInternalOrder(req, res) {
         "Order creation failed",
 
       details:
-        process.env.NODE_ENV === "production"
+        process.env.NODE_ENV ===
+        "production"
           ? undefined
           : error.message
 
@@ -906,6 +1177,8 @@ async function createInternalOrder(req, res) {
   }
 
 }
+
+
 
 module.exports = {
 

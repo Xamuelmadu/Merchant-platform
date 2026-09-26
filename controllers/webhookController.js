@@ -2,36 +2,52 @@ const crypto = require("crypto")
 
 const Store = require("../models/store")
 const Product = require("../models/product")
+const Order = require("../models/order")
+
 
 const {
   syncShopifyCustomer,
   deleteShopifyCustomer
 } = require("../services/shopifyCustomerService")
 
+
 const {
   syncShopifyOrder,
   deleteShopifyOrder
 } = require("../services/shopifyOrderService")
 
+const {
+  syncWooProduct
+} =
+  require("../services/woocommerceService")
 
 /*
---------------------------------
+================================
 HELPER: ADD 1 YEAR
---------------------------------
+================================
 */
 
 function addOneYear() {
+
   return new Date(
     Date.now() +
-    (365 * 24 * 60 * 60 * 1000)
+    (
+      365 *
+      24 *
+      60 *
+      60 *
+      1000
+    )
   )
+
 }
 
 
+
 /*
---------------------------------
+================================
 SHOPIFY HMAC
---------------------------------
+================================
 */
 
 function verifyShopifyWebhook(
@@ -41,26 +57,33 @@ function verifyShopifyWebhook(
   const secret =
     process.env.SHOPIFY_API_SECRET
 
+
   if (!secret) {
+
     throw new Error(
       "SHOPIFY_API_SECRET is not configured"
     )
+
   }
+
 
   const receivedHmac =
-    req.headers["x-shopify-hmac-sha256"]
+    req.headers[
+      "x-shopify-hmac-sha256"
+    ]
+
 
   if (!receivedHmac) {
+
     return false
+
   }
 
-  /*
-  express.raw() gives us the original
-  Buffer required for Shopify HMAC.
-  */
 
   const rawBody =
-    Buffer.isBuffer(req.body)
+    Buffer.isBuffer(
+      req.body
+    )
       ? req.body
       : Buffer.from("")
 
@@ -71,15 +94,22 @@ function verifyShopifyWebhook(
         "sha256",
         secret
       )
-      .update(rawBody)
-      .digest("base64")
+      .update(
+        rawBody
+      )
+      .digest(
+        "base64"
+      )
 
 
   const received =
     Buffer.from(
-      String(receivedHmac),
+      String(
+        receivedHmac
+      ),
       "utf8"
     )
+
 
   const expected =
     Buffer.from(
@@ -92,7 +122,9 @@ function verifyShopifyWebhook(
     received.length !==
     expected.length
   ) {
+
     return false
+
   }
 
 
@@ -104,10 +136,11 @@ function verifyShopifyWebhook(
 }
 
 
+
 /*
---------------------------------
+================================
 SHOPIFY BODY
---------------------------------
+================================
 */
 
 function parseShopifyBody(
@@ -115,24 +148,30 @@ function parseShopifyBody(
 ) {
 
   if (
-    Buffer.isBuffer(req.body)
+    Buffer.isBuffer(
+      req.body
+    )
   ) {
 
     return JSON.parse(
-      req.body.toString("utf8")
+      req.body.toString(
+        "utf8"
+      )
     )
 
   }
+
 
   return req.body
 
 }
 
 
+
 /*
---------------------------------
+================================
 FIND SHOPIFY STORE
---------------------------------
+================================
 */
 
 async function findShopifyStore(
@@ -151,7 +190,9 @@ async function findShopifyStore(
 
 
   if (!shopDomain) {
+
     return null
+
   }
 
 
@@ -174,10 +215,11 @@ async function findShopifyStore(
 }
 
 
+
 /*
---------------------------------
+================================
 NORMALIZE SHOPIFY PRODUCT
---------------------------------
+================================
 */
 
 function normalizeShopifyProduct(
@@ -187,6 +229,7 @@ function normalizeShopifyProduct(
 
   const productId =
     product.id
+
 
   const title =
     product.title ||
@@ -209,10 +252,6 @@ function normalizeShopifyProduct(
   --------------------------------
   PRICE
   --------------------------------
-
-  Shopify webhook payloads expose
-  variant prices rather than the
-  Admin GraphQL priceRange object.
   */
 
   const variants =
@@ -233,7 +272,9 @@ function normalizeShopifyProduct(
       )
       .filter(
         price =>
-          Number.isFinite(price)
+          Number.isFinite(
+            price
+          )
       )
 
 
@@ -262,6 +303,7 @@ function normalizeShopifyProduct(
           Number(
             variant.inventory_quantity
           )
+
 
         return (
           total +
@@ -298,12 +340,6 @@ function normalizeShopifyProduct(
       : []
 
 
-  /*
-  --------------------------------
-  FALLBACK IMAGE
-  --------------------------------
-  */
-
   if (
     !images.length &&
     product.image?.src
@@ -335,7 +371,7 @@ function normalizeShopifyProduct(
 
   /*
   --------------------------------
-  VARIANT NORMALIZATION
+  VARIANTS
   --------------------------------
   */
 
@@ -349,24 +385,30 @@ function normalizeShopifyProduct(
         if (
           variant.option1
         ) {
+
           attributes.option1 =
             variant.option1
+
         }
 
 
         if (
           variant.option2
         ) {
+
           attributes.option2 =
             variant.option2
+
         }
 
 
         if (
           variant.option3
         ) {
+
           attributes.option3 =
             variant.option3
+
         }
 
 
@@ -437,19 +479,10 @@ function normalizeShopifyProduct(
 
     description,
 
-    price,
-
-    /*
-    Shopify webhook product payloads
-    do not reliably provide the shop
-    currency.
-
-    Keep the existing default rather
-    than inventing a currency value.
-    */
-
     currency:
       "USD",
+
+    price,
 
     stock,
 
@@ -467,6 +500,7 @@ function normalizeShopifyProduct(
   }
 
 }
+
 
 
 /*
@@ -513,8 +547,10 @@ async function handleShopifyProductCreate(
     if (!product?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify product ID missing"
+
       })
 
     }
@@ -530,6 +566,7 @@ async function handleShopifyProductCreate(
     await Product.findOneAndUpdate(
 
       {
+
         store_id:
           store._id,
 
@@ -542,17 +579,23 @@ async function handleShopifyProductCreate(
       },
 
       {
+
         $set:
           normalized
+
       },
 
       {
-        upsert: true,
 
-        new: true,
+        upsert:
+          true,
+
+        new:
+          true,
 
         setDefaultsOnInsert:
           true
+
       }
 
     )
@@ -570,7 +613,9 @@ async function handleShopifyProductCreate(
       undefined
 
 
-    if (store.shopify) {
+    if (
+      store.shopify
+    ) {
 
       store.shopify.last_product_sync =
         now
@@ -599,13 +644,16 @@ async function handleShopifyProductCreate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify product webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -645,8 +693,10 @@ async function handleShopifyProductUpdate(
     if (!product?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify product ID missing"
+
       })
 
     }
@@ -662,6 +712,7 @@ async function handleShopifyProductUpdate(
     await Product.findOneAndUpdate(
 
       {
+
         store_id:
           store._id,
 
@@ -674,17 +725,23 @@ async function handleShopifyProductUpdate(
       },
 
       {
+
         $set:
           normalized
+
       },
 
       {
-        upsert: true,
 
-        new: true,
+        upsert:
+          true,
+
+        new:
+          true,
 
         setDefaultsOnInsert:
           true
+
       }
 
     )
@@ -702,7 +759,9 @@ async function handleShopifyProductUpdate(
       undefined
 
 
-    if (store.shopify) {
+    if (
+      store.shopify
+    ) {
 
       store.shopify.last_product_sync =
         now
@@ -731,13 +790,16 @@ async function handleShopifyProductUpdate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify product webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -777,8 +839,10 @@ async function handleShopifyProductDelete(
     if (!product?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify product ID missing"
+
       })
 
     }
@@ -808,7 +872,9 @@ async function handleShopifyProductDelete(
       now
 
 
-    if (store.shopify) {
+    if (
+      store.shopify
+    ) {
 
       store.shopify.last_product_sync =
         now
@@ -837,13 +903,16 @@ async function handleShopifyProductDelete(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify product webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -883,8 +952,10 @@ async function handleShopifyCustomerCreate(
     if (!customer?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify customer ID missing"
+
       })
 
     }
@@ -917,13 +988,16 @@ async function handleShopifyCustomerCreate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify customer webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -963,8 +1037,10 @@ async function handleShopifyCustomerUpdate(
     if (!customer?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify customer ID missing"
+
       })
 
     }
@@ -997,13 +1073,16 @@ async function handleShopifyCustomerUpdate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify customer webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1043,8 +1122,10 @@ async function handleShopifyCustomerDelete(
     if (!customer?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify customer ID missing"
+
       })
 
     }
@@ -1078,13 +1159,16 @@ async function handleShopifyCustomerDelete(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify customer webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1124,8 +1208,10 @@ async function handleShopifyOrderCreate(
     if (!order?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify order ID missing"
+
       })
 
     }
@@ -1158,13 +1244,16 @@ async function handleShopifyOrderCreate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify order webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1204,8 +1293,10 @@ async function handleShopifyOrderUpdate(
     if (!order?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify order ID missing"
+
       })
 
     }
@@ -1238,13 +1329,16 @@ async function handleShopifyOrderUpdate(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify order webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1284,8 +1378,10 @@ async function handleShopifyOrderCancelled(
     if (!order?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify order ID missing"
+
       })
 
     }
@@ -1318,13 +1414,16 @@ async function handleShopifyOrderCancelled(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify order webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1364,8 +1463,10 @@ async function handleShopifyOrderDelete(
     if (!order?.id) {
 
       return res.status(400).json({
+
         error:
           "Shopify order ID missing"
+
       })
 
     }
@@ -1399,13 +1500,16 @@ async function handleShopifyOrderDelete(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify order delete webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1439,7 +1543,9 @@ async function handleShopifyAppUninstalled(
         undefined
 
 
-      if (store.shopify) {
+      if (
+        store.shopify
+      ) {
 
         store.shopify.connected =
           false
@@ -1470,13 +1576,16 @@ async function handleShopifyAppUninstalled(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify uninstall webhook failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1491,12 +1600,6 @@ async function handleShopifyWebhook(
 ) {
 
   try {
-
-    /*
-    --------------------------------
-    VERIFY HMAC
-    --------------------------------
-    */
 
     if (
       !verifyShopifyWebhook(
@@ -1524,12 +1627,6 @@ async function handleShopifyWebhook(
       )
         .toLowerCase()
 
-
-    /*
-    --------------------------------
-    DISPATCH
-    --------------------------------
-    */
 
     switch (topic) {
 
@@ -1642,13 +1739,1532 @@ async function handleShopifyWebhook(
     )
 
     return res.status(500).json({
+
       error:
         "Shopify webhook processing failed"
+
     })
 
   }
 
 }
+
+
+
+/*
+================================
+WOOCOMMERCE BODY
+================================
+*/
+
+function parseWooCommerceBody(
+  req
+) {
+
+  if (
+    Buffer.isBuffer(
+      req.body
+    )
+  ) {
+
+    return JSON.parse(
+      req.body.toString(
+        "utf8"
+      )
+    )
+
+  }
+
+
+  return req.body
+
+}
+
+
+
+/*
+================================
+FIND WOOCOMMERCE STORE
+================================
+*/
+
+async function findWooCommerceStore(
+  req
+) {
+
+  const source =
+    String(
+      req.headers[
+        "x-wc-webhook-source"
+      ] ||
+      ""
+    )
+      .trim()
+      .toLowerCase()
+
+
+  if (!source) {
+
+    return null
+
+  }
+
+
+  /*
+  --------------------------------
+  NORMALIZE SOURCE URL
+  --------------------------------
+  */
+
+  const normalizedSource =
+    source.replace(
+      /\/+$/,
+      ""
+    )
+
+
+  /*
+  --------------------------------
+  FIND STORE
+  --------------------------------
+  */
+
+  const stores =
+    await Store.find({
+
+      platform:
+        "woocommerce",
+
+      platform_connected:
+        true,
+
+      "woocommerce.connected":
+        true
+
+    })
+
+
+  /*
+  --------------------------------
+  MATCH URL
+  --------------------------------
+  */
+
+  for (
+    const store
+    of stores
+  ) {
+
+    const storeUrl =
+      String(
+        store.woocommerce?.store_url ||
+        ""
+      )
+        .trim()
+        .replace(
+          /\/+$/,
+          ""
+        )
+        .toLowerCase()
+
+
+    if (
+      storeUrl &&
+      storeUrl ===
+        normalizedSource
+    ) {
+
+      return store
+
+    }
+
+  }
+
+
+  return null
+
+}
+
+
+
+/*
+================================
+VERIFY WOOCOMMERCE WEBHOOK
+================================
+*/
+
+function verifyWooCommerceWebhook(
+  req,
+  store
+) {
+
+  const secret =
+    store
+      ?.woocommerce
+      ?.webhook_secret
+
+
+  if (!secret) {
+
+    console.error(
+      "WooCommerce webhook secret is missing"
+    )
+
+    return false
+
+  }
+
+
+  const receivedSignature =
+    req.headers[
+      "x-wc-webhook-signature"
+    ]
+
+
+  if (
+    !receivedSignature
+  ) {
+
+    return false
+
+  }
+
+
+  /*
+  --------------------------------
+  ORIGINAL RAW BODY
+  --------------------------------
+  */
+
+  const rawBody =
+    Buffer.isBuffer(
+      req.body
+    )
+      ? req.body
+      : Buffer.from("")
+
+
+  /*
+  --------------------------------
+  HMAC SHA256
+  --------------------------------
+  */
+
+  const digest =
+    crypto
+      .createHmac(
+        "sha256",
+        secret
+      )
+      .update(
+        rawBody
+      )
+      .digest(
+        "base64"
+      )
+
+
+  const received =
+    Buffer.from(
+      String(
+        receivedSignature
+      ),
+      "utf8"
+    )
+
+
+  const expected =
+    Buffer.from(
+      digest,
+      "utf8"
+    )
+
+
+  if (
+    received.length !==
+    expected.length
+  ) {
+
+    return false
+
+  }
+
+
+  return crypto.timingSafeEqual(
+    received,
+    expected
+  )
+
+}
+
+
+
+/*
+================================
+NORMALIZE WOOCOMMERCE PRODUCT
+================================
+*/
+
+function normalizeWooCommerceProduct(
+  product,
+  store
+) {
+
+  const variations =
+    Array.isArray(
+      product.variations
+    )
+      ? product.variations
+      : []
+
+
+  const numericPrices =
+    variations
+      .map(
+        variant =>
+          Number(
+            variant.price
+          )
+      )
+      .filter(
+        price =>
+          Number.isFinite(
+            price
+          )
+      )
+
+
+  const price =
+    numericPrices.length
+      ? Math.min(
+          ...numericPrices
+        )
+      : (
+          Number(
+            product.price
+          ) || 0
+        )
+
+
+  /*
+  --------------------------------
+  STOCK
+  --------------------------------
+  */
+
+  let stock =
+    Number(
+      product.stock_quantity
+    )
+
+
+  if (
+    !Number.isFinite(
+      stock
+    )
+  ) {
+
+    stock = 0
+
+  }
+
+
+  /*
+  --------------------------------
+  VARIANT STOCK
+  --------------------------------
+  */
+
+  if (
+    variations.length
+  ) {
+
+    stock =
+      variations.reduce(
+
+        (
+          total,
+          variant
+        ) => {
+
+          const quantity =
+            Number(
+              variant.stock_quantity
+            )
+
+
+          return (
+            total +
+            (
+              Number.isFinite(
+                quantity
+              )
+                ? quantity
+                : 0
+            )
+          )
+
+        },
+
+        0
+
+      )
+
+  }
+
+
+  /*
+  --------------------------------
+  IMAGES
+  --------------------------------
+  */
+
+  const images =
+    Array.isArray(
+      product.images
+    )
+
+      ? product.images
+          .map(
+            image =>
+              image?.src
+          )
+          .filter(Boolean)
+
+      : []
+
+
+  /*
+  --------------------------------
+  VARIANTS
+  --------------------------------
+  */
+
+  const normalizedVariants =
+    variations.map(
+      variant => {
+
+        const attributes = {}
+
+
+        if (
+          Array.isArray(
+            variant.attributes
+          )
+        ) {
+
+          for (
+            const attribute
+            of variant.attributes
+          ) {
+
+            if (
+              attribute.name
+            ) {
+
+              attributes[
+                attribute.name
+              ] =
+                attribute.option ||
+                ""
+
+            }
+
+          }
+
+        }
+
+
+        const variantStock =
+          Number(
+            variant.stock_quantity
+          )
+
+
+        return {
+
+          external_id:
+            String(
+              variant.id
+            ),
+
+          title:
+            variant.name ||
+            "",
+
+          sku:
+            variant.sku ||
+            "",
+
+          price:
+            Number(
+              variant.price
+            ) || 0,
+
+          stock:
+            Number.isFinite(
+              variantStock
+            )
+              ? variantStock
+              : 0,
+
+          available:
+            variant.stock_status ===
+              "instock" ||
+            !variant.manage_stock,
+
+          attributes
+
+        }
+
+      }
+    )
+
+
+  return {
+
+    store_id:
+      store._id,
+
+    external_id:
+      String(
+        product.id
+      ),
+
+    name:
+      product.name ||
+      "",
+
+    description:
+      product.description ||
+      "",
+
+    price,
+
+    currency:
+      product.currency ||
+      "USD",
+
+    stock,
+
+    images,
+
+    product_url:
+      product.permalink ||
+      "",
+
+    variants:
+      normalizedVariants,
+
+    source:
+      "woocommerce"
+
+  }
+
+}
+
+
+
+/*
+================================
+UPDATE WOOCOMMERCE SYNC TIME
+================================
+*/
+
+async function updateWooProductSyncTime(
+  store
+) {
+
+  const now =
+    new Date()
+
+
+  store.platform_last_sync =
+    now
+
+
+  store.platform_sync_error =
+    undefined
+
+
+  if (
+    store.woocommerce
+  ) {
+
+    store.woocommerce.last_product_sync =
+      now
+
+  }
+
+
+  await store.save()
+
+}
+
+
+
+/*
+================================
+UPDATE WOOCOMMERCE ORDER SYNC TIME
+================================
+*/
+
+async function updateWooOrderSyncTime(
+  store
+) {
+
+  const now =
+    new Date()
+
+
+  store.platform_last_sync =
+    now
+
+
+  store.platform_sync_error =
+    undefined
+
+
+  if (
+    store.woocommerce
+  ) {
+
+    store.woocommerce.last_order_sync =
+      now
+
+  }
+
+
+  await store.save()
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE PRODUCT CREATE
+================================
+*/
+
+async function handleWooCommerceProductCreate(
+  req,
+  res,
+  store
+) {
+
+  const product =
+    parseWooCommerceBody(
+      req
+    )
+
+
+  if (
+    !product?.id
+  ) {
+
+    return res.status(400).json({
+
+      error:
+        "WooCommerce product ID missing"
+
+    })
+
+  }
+
+
+  /*
+  --------------------------------
+  FETCH + NORMALIZE + UPSERT
+  --------------------------------
+  */
+
+  const result =
+    await syncWooProduct(
+
+      store,
+
+      product.id
+
+    )
+
+
+  /*
+  --------------------------------
+  PRODUCT DELETED
+  --------------------------------
+
+  This can happen if WooCommerce
+  sends an update for a product that
+  was removed before our API fetch.
+  --------------------------------
+  */
+
+  if (
+    result.deleted
+  ) {
+
+    await Product.deleteOne({
+
+      store_id:
+        store._id,
+
+      source:
+        "woocommerce",
+
+      external_id:
+        String(
+          product.id
+        )
+
+    })
+
+
+    await updateWooProductSyncTime(
+      store
+    )
+
+
+    console.log(
+      "WooCommerce product removed:",
+      product.id
+    )
+
+
+    return res.json({
+
+      received:
+        true,
+
+      deleted:
+        true
+
+    })
+
+  }
+
+
+  /*
+  --------------------------------
+  UPDATE SYNC TIME
+  --------------------------------
+  */
+
+  await updateWooProductSyncTime(
+    store
+  )
+
+
+  console.log(
+
+    "WooCommerce product synchronized:",
+
+    result.product.external_id
+
+  )
+
+
+  return res.json({
+
+    received:
+      true,
+
+    product_id:
+      result.product.external_id
+
+  })
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE PRODUCT UPDATE
+================================
+*/
+
+async function handleWooCommerceProductUpdate(
+  req,
+  res,
+  store
+) {
+
+  return handleWooCommerceProductCreate(
+    req,
+    res,
+    store
+  )
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE PRODUCT DELETE
+================================
+*/
+
+async function handleWooCommerceProductDelete(
+  req,
+  res,
+  store
+) {
+
+  const product =
+    parseWooCommerceBody(
+      req
+    )
+
+
+  if (
+    !product?.id
+  ) {
+
+    return res.status(400).json({
+
+      error:
+        "WooCommerce product ID missing"
+
+    })
+
+  }
+
+
+  await Product.deleteOne({
+
+    store_id:
+      store._id,
+
+    source:
+      "woocommerce",
+
+    external_id:
+      String(
+        product.id
+      )
+
+  })
+
+
+  await updateWooProductSyncTime(
+    store
+  )
+
+
+  console.log(
+    "WooCommerce product deleted:",
+    product.id
+  )
+
+
+  return res.json({
+    received: true
+  })
+
+}
+
+
+
+/*
+================================
+NORMALIZE WOOCOMMERCE ORDER
+================================
+*/
+
+function normalizeWooCommerceOrder(
+  wooOrder,
+  store
+) {
+
+  const lineItems =
+    Array.isArray(
+      wooOrder.line_items
+    )
+      ? wooOrder.line_items
+      : []
+
+
+  const items =
+    lineItems.map(
+      item => {
+
+        const itemTotal =
+          Number(
+            item.total
+          ) || 0
+
+
+        const quantity =
+          Number(
+            item.quantity
+          ) || 1
+
+
+        const unitPrice =
+          Number(
+            item.price
+          )
+
+
+        return {
+
+          external_product_id:
+            item.product_id
+              ? String(
+                  item.product_id
+                )
+              : "",
+
+          external_variant_id:
+            item.variation_id
+              ? String(
+                  item.variation_id
+                )
+              : "",
+
+          name:
+            item.name ||
+            "",
+
+          sku:
+            item.sku ||
+            "",
+
+          quantity,
+
+          unit_price:
+            Number.isFinite(
+              unitPrice
+            )
+              ? unitPrice
+              : (
+                  itemTotal /
+                  quantity
+                ),
+
+          total_price:
+            itemTotal
+
+        }
+
+      }
+    )
+
+
+  const billing =
+    wooOrder.billing ||
+    {}
+
+
+  /*
+  --------------------------------
+  ORDER STATUS
+  --------------------------------
+  */
+
+  let orderStatus =
+    "new"
+
+
+  if (
+    wooOrder.status ===
+      "processing" ||
+    wooOrder.status ===
+      "on-hold"
+  ) {
+
+    orderStatus =
+      "paid"
+
+  }
+
+
+  if (
+    wooOrder.status ===
+    "completed"
+  ) {
+
+    orderStatus =
+      "completed"
+
+  }
+
+
+  if (
+    wooOrder.status ===
+      "cancelled" ||
+    wooOrder.status ===
+      "refunded"
+  ) {
+
+    orderStatus =
+      "cancelled"
+
+  }
+
+
+  /*
+  --------------------------------
+  PAYMENT STATUS
+  --------------------------------
+  */
+
+  let paymentStatus =
+    "pending"
+
+
+  if (
+    wooOrder.status ===
+      "processing" ||
+    wooOrder.status ===
+      "completed"
+  ) {
+
+    paymentStatus =
+      "paid"
+
+  }
+
+
+  if (
+    wooOrder.status ===
+    "refunded"
+  ) {
+
+    paymentStatus =
+      "refunded"
+
+  }
+
+
+  if (
+    wooOrder.status ===
+    "cancelled"
+  ) {
+
+    paymentStatus =
+      "cancelled"
+
+  }
+
+
+  /*
+  --------------------------------
+  CUSTOMER NAME
+  --------------------------------
+  */
+
+  const customerName =
+    [
+      billing.first_name,
+      billing.last_name
+    ]
+      .filter(Boolean)
+      .join(" ")
+
+
+  /*
+  --------------------------------
+  CUSTOMER ADDRESS
+  --------------------------------
+  */
+
+  const customerAddress =
+    [
+      billing.address_1,
+      billing.address_2,
+      billing.city,
+      billing.state,
+      billing.postcode,
+      billing.country
+    ]
+      .filter(Boolean)
+      .join(", ")
+
+
+  /*
+  --------------------------------
+  RETURN NORMALIZED ORDER
+  --------------------------------
+  */
+
+  return {
+
+    store_id:
+      store._id,
+
+    external_id:
+      String(
+        wooOrder.id
+      ),
+
+    source:
+      "woocommerce",
+
+    order_number:
+      wooOrder.number ||
+      String(
+        wooOrder.id
+      ),
+
+    external_customer_id:
+      wooOrder.customer_id
+        ? String(
+            wooOrder.customer_id
+          )
+        : "",
+
+    customer_name:
+      customerName,
+
+    customer_email:
+      billing.email ||
+      "",
+
+    customer_phone:
+      billing.phone ||
+      "",
+
+    customer_address:
+      customerAddress,
+
+    items,
+
+    subtotal:
+      Number(
+        wooOrder.subtotal
+      ) ||
+      Number(
+        wooOrder.total
+      ) ||
+      0,
+
+    total_price:
+      Number(
+        wooOrder.total
+      ) || 0,
+
+    currency:
+      wooOrder.currency ||
+      "USD",
+
+    payment_reference:
+      wooOrder.transaction_id ||
+      "",
+
+    payment_status:
+      paymentStatus,
+
+    order_status:
+      orderStatus,
+
+    ordered_at:
+      wooOrder.date_created
+        ? new Date(
+            wooOrder.date_created
+          )
+        : new Date(),
+
+    fulfilled_at:
+      wooOrder.date_completed
+        ? new Date(
+            wooOrder.date_completed
+          )
+        : undefined,
+
+    cancelled_at:
+      wooOrder.date_cancelled
+        ? new Date(
+            wooOrder.date_cancelled
+          )
+        : undefined
+
+  }
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE ORDER CREATE
+================================
+*/
+
+async function handleWooCommerceOrderCreate(
+  req,
+  res,
+  store
+) {
+
+  const wooOrder =
+    parseWooCommerceBody(
+      req
+    )
+
+
+  if (
+    !wooOrder?.id
+  ) {
+
+    return res.status(400).json({
+
+      error:
+        "WooCommerce order ID missing"
+
+    })
+
+  }
+
+
+  const normalized =
+    normalizeWooCommerceOrder(
+      wooOrder,
+      store
+    )
+
+
+  await Order.findOneAndUpdate(
+
+    {
+
+      store_id:
+        store._id,
+
+      source:
+        "woocommerce",
+
+      external_id:
+        normalized.external_id
+
+    },
+
+    {
+
+      $set:
+        normalized
+
+    },
+
+    {
+
+      upsert:
+        true,
+
+      new:
+        true,
+
+      setDefaultsOnInsert:
+        true
+
+    }
+
+  )
+
+
+  await updateWooOrderSyncTime(
+    store
+  )
+
+
+  console.log(
+    "WooCommerce order created:",
+    normalized.external_id
+  )
+
+
+  return res.json({
+    received: true
+  })
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE ORDER UPDATE
+================================
+*/
+
+async function handleWooCommerceOrderUpdate(
+  req,
+  res,
+  store
+) {
+
+  return handleWooCommerceOrderCreate(
+    req,
+    res,
+    store
+  )
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE ORDER DELETE
+================================
+*/
+
+async function handleWooCommerceOrderDelete(
+  req,
+  res,
+  store
+) {
+
+  const wooOrder =
+    parseWooCommerceBody(
+      req
+    )
+
+
+  if (
+    !wooOrder?.id
+  ) {
+
+    return res.status(400).json({
+
+      error:
+        "WooCommerce order ID missing"
+
+    })
+
+  }
+
+
+  await Order.deleteOne({
+
+    store_id:
+      store._id,
+
+    source:
+      "woocommerce",
+
+    external_id:
+      String(
+        wooOrder.id
+      )
+
+  })
+
+
+  await updateWooOrderSyncTime(
+    store
+  )
+
+
+  console.log(
+    "WooCommerce order deleted:",
+    wooOrder.id
+  )
+
+
+  return res.json({
+    received: true
+  })
+
+}
+
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK DISPATCHER
+================================
+*/
+
+async function handleWooCommerceWebhook(
+  req,
+  res
+) {
+
+  try {
+
+    /*
+    --------------------------------
+    FIND STORE
+    --------------------------------
+    */
+
+    const store =
+      await findWooCommerceStore(
+        req
+      )
+
+
+    if (!store) {
+
+      console.log(
+        "WooCommerce store not found:",
+        req.headers[
+          "x-wc-webhook-source"
+        ]
+      )
+
+      /*
+      --------------------------------
+      ACK UNKNOWN STORE
+      --------------------------------
+
+      We acknowledge the webhook so
+      WooCommerce does not endlessly
+      retry a webhook for a store that
+      has already disconnected.
+      --------------------------------
+      */
+
+      return res.json({
+        received: true
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    VERIFY SIGNATURE
+    --------------------------------
+    */
+
+    if (
+      !verifyWooCommerceWebhook(
+        req,
+        store
+      )
+    ) {
+
+      console.log(
+        "Invalid WooCommerce webhook signature"
+      )
+
+      return res.status(401).send(
+        "Invalid signature"
+      )
+
+    }
+
+
+    /*
+    --------------------------------
+    TOPIC
+    --------------------------------
+    */
+
+    const topic =
+      String(
+        req.headers[
+          "x-wc-webhook-topic"
+        ] ||
+        ""
+      )
+        .trim()
+        .toLowerCase()
+
+
+    console.log(
+      "WooCommerce webhook:",
+      topic
+    )
+
+
+    /*
+    --------------------------------
+    DISPATCH
+    --------------------------------
+    */
+
+    switch (topic) {
+
+      case "product.created":
+
+        return handleWooCommerceProductCreate(
+          req,
+          res,
+          store
+        )
+
+
+      case "product.updated":
+
+        return handleWooCommerceProductUpdate(
+          req,
+          res,
+          store
+        )
+
+
+      case "product.deleted":
+
+        return handleWooCommerceProductDelete(
+          req,
+          res,
+          store
+        )
+
+
+      case "order.created":
+
+        return handleWooCommerceOrderCreate(
+          req,
+          res,
+          store
+        )
+
+
+      case "order.updated":
+
+        return handleWooCommerceOrderUpdate(
+          req,
+          res,
+          store
+        )
+
+
+      case "order.deleted":
+
+        return handleWooCommerceOrderDelete(
+          req,
+          res,
+          store
+        )
+
+
+      default:
+
+        console.log(
+          "Unhandled WooCommerce webhook:",
+          topic
+        )
+
+        return res.json({
+          received: true
+        })
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "WooCommerce webhook error:",
+      error
+    )
+
+    return res.status(500).json({
+
+      error:
+        "WooCommerce webhook processing failed"
+
+    })
+
+  }
+
+}
+
 
 
 /*
@@ -1667,6 +3283,7 @@ async function handleStripeWebhook(
     const event =
       req.body
 
+
     console.log(
       "Stripe webhook:",
       event.type
@@ -1681,8 +3298,10 @@ async function handleStripeWebhook(
       const session =
         event.data.object
 
+
       const customerId =
         session.customer
+
 
       const plan =
         session.metadata?.plan ||
@@ -1691,8 +3310,10 @@ async function handleStripeWebhook(
 
       const store =
         await Store.findOne({
+
           stripe_customer_id:
             customerId
+
         })
 
 
@@ -1713,8 +3334,10 @@ async function handleStripeWebhook(
       store.plan =
         plan
 
+
       store.subscription_status =
         "active"
+
 
       store.subscription_renewal =
         addOneYear()
@@ -1742,8 +3365,10 @@ async function handleStripeWebhook(
 
       const store =
         await Store.findOne({
+
           stripe_customer_id:
             subscription.customer
+
         })
 
 
@@ -1752,7 +3377,9 @@ async function handleStripeWebhook(
         store.subscription_status =
           "cancelled"
 
+
         await store.save()
+
 
         console.log(
           "Stripe subscription cancelled"
@@ -1775,13 +3402,16 @@ async function handleStripeWebhook(
     )
 
     return res.status(500).json({
+
       error:
         "Webhook processing failed"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -1804,9 +3434,13 @@ async function handlePaystackWebhook(
           process.env.PAYSTACK_SECRET
         )
         .update(
-          JSON.stringify(req.body)
+          JSON.stringify(
+            req.body
+          )
         )
-        .digest("hex")
+        .digest(
+          "hex"
+        )
 
 
     if (
@@ -1849,6 +3483,7 @@ async function handlePaystackWebhook(
       const storeId =
         data.metadata?.store_id
 
+
       const plan =
         data.metadata?.plan ||
         "starter"
@@ -1890,8 +3525,10 @@ async function handlePaystackWebhook(
       store.plan =
         plan
 
+
       store.subscription_status =
         "active"
+
 
       store.subscription_renewal =
         addOneYear()
@@ -1920,8 +3557,10 @@ async function handlePaystackWebhook(
     )
 
     return res.status(500).json({
+
       error:
         "Webhook processing failed"
+
     })
 
   }
@@ -1929,12 +3568,21 @@ async function handlePaystackWebhook(
 }
 
 
+
+/*
+================================
+MODULE EXPORTS
+================================
+*/
+
 module.exports = {
 
   handleStripeWebhook,
 
   handlePaystackWebhook,
 
-  handleShopifyWebhook
+  handleShopifyWebhook,
+
+  handleWooCommerceWebhook
 
 }

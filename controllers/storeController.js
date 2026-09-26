@@ -1,4 +1,5 @@
 const mongoose = require("mongoose")
+
 const Store = require("../models/store")
 const User = require("../models/user")
 
@@ -8,9 +9,54 @@ const {
 } = require("../config/plan")
 
 
+
+/*
+--------------------------------
+CURRENCY HELPER
+--------------------------------
+
+Normalizes a commerce-platform
+currency into a consistent
+three-letter uppercase code.
+
+Examples:
+
+usd → USD
+gbp → GBP
+eur → EUR
+ngn → NGN
+--------------------------------
+*/
+
+function normalizeCurrency(currency) {
+
+  const normalized =
+    String(currency || "")
+      .trim()
+      .toUpperCase()
+
+
+  if (!/^[A-Z]{3}$/.test(normalized)) {
+    return null
+  }
+
+
+  return normalized
+}
+
+
+
 /*
 --------------------------------
 CREATE STORE
+--------------------------------
+
+Legacy/manual store creation is
+still retained for compatibility.
+
+Native Shopify and WooCommerce
+connections are the preferred
+store-creation paths.
 --------------------------------
 */
 
@@ -18,13 +64,25 @@ async function createStore(req, res) {
 
   try {
 
-    const { store_name } = req.body
+    const {
+      store_name,
+      currency
+    } = req.body
 
-    const userId = req.user.id
-    const userPlan = req.user.plan || "free"
+
+    const userId =
+      req.user.id
+
+
+    const userPlan =
+      req.user.plan || "free"
+
 
     // AUTO USE VERIFIED PHONE
-    const merchant_phone = req.user.phone
+
+    const merchant_phone =
+      req.user.phone
+
 
     /*
     --------------------------------
@@ -35,10 +93,25 @@ async function createStore(req, res) {
     if (!store_name) {
 
       return res.status(400).json({
-        error: "Store name is required"
+
+        error:
+          "Store name is required"
+
       })
 
     }
+
+
+    /*
+    --------------------------------
+    CURRENCY
+    --------------------------------
+    */
+
+    const normalizedCurrency =
+      normalizeCurrency(currency) ||
+      "USD"
+
 
     /*
     --------------------------------
@@ -49,20 +122,33 @@ async function createStore(req, res) {
     const storeLimit =
       getStoreLimit(userPlan)
 
+
     const currentCount =
       await Store.countDocuments({
-        merchant_id: userId
+
+        merchant_id:
+          userId
+
       })
 
-    if (currentCount >= storeLimit) {
+
+    if (
+      currentCount >=
+      storeLimit
+    ) {
 
       return res.status(403).json({
+
         error:
           `Store limit reached (${storeLimit}). Upgrade your plan.`,
-        code: "STORE_LIMIT_REACHED"
+
+        code:
+          "STORE_LIMIT_REACHED"
+
       })
 
     }
+
 
     /*
     --------------------------------
@@ -73,49 +159,69 @@ async function createStore(req, res) {
     const planConfig =
       getPlan(userPlan)
 
+
     /*
     --------------------------------
     CREATE STORE
     --------------------------------
     */
 
-    const store = await Store.create({
+    const store =
+      await Store.create({
 
-      merchant_id: userId,
+        merchant_id:
+          userId,
 
-      store_name:
-        store_name.trim(),
+        store_name:
+          store_name.trim(),
 
-      // AUTO LINK WHATSAPP
-      whatsapp_number:
-        merchant_phone || "",
+        industry:
+          "ecommerce",
 
-      /*
-      PLAN SNAPSHOT
-      */
+        /*
+        Canonical store currency.
+        */
 
-      plan: userPlan,
+        currency:
+          normalizedCurrency,
 
-      transaction_fee:
-        planConfig.transaction_fee,
+        // AUTO LINK WHATSAPP
 
-      /*
-      USAGE TRACKING
-      */
+        whatsapp_number:
+          merchant_phone || "",
 
-      orders_used: 0,
 
-      /*
-      BILLING STATE
-      */
+        /*
+        PLAN SNAPSHOT
+        */
 
-      subscription_status:
-        "active",
+        plan:
+          userPlan,
 
-      subscription_renewal:
-        null
+        transaction_fee:
+          planConfig.transaction_fee,
 
-    })
+
+        /*
+        USAGE TRACKING
+        */
+
+        orders_used:
+          0,
+
+
+        /*
+        BILLING STATE
+        */
+
+        subscription_status:
+          "active",
+
+        subscription_renewal:
+          null
+
+      })
+
 
     return res.status(201).json({
 
@@ -126,6 +232,7 @@ async function createStore(req, res) {
 
     })
 
+
   } catch (error) {
 
     console.error(
@@ -133,14 +240,18 @@ async function createStore(req, res) {
       error.message
     )
 
+
     return res.status(500).json({
+
       error:
         "Failed to create store"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -156,15 +267,24 @@ async function getStores(req, res) {
     const userId =
       req.user.id
 
+
     const userPlan =
       req.user.plan || "free"
 
+
     const stores =
       await Store.find({
-        merchant_id: userId
+
+        merchant_id:
+          userId
+
       }).sort({
-        createdAt: 1
+
+        createdAt:
+          1
+
       })
+
 
     return res.status(200).json({
 
@@ -185,6 +305,7 @@ async function getStores(req, res) {
 
     })
 
+
   } catch (error) {
 
     console.error(
@@ -192,14 +313,18 @@ async function getStores(req, res) {
       error.message
     )
 
+
     return res.status(500).json({
+
       error:
         "Failed to fetch stores"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -223,18 +348,23 @@ async function getStore(req, res) {
 
       })
 
+
     if (!store) {
 
       return res.status(404).json({
+
         error:
           "Store not found"
+
       })
 
     }
 
+
     return res.status(200).json(
       store
     )
+
 
   } catch (error) {
 
@@ -243,14 +373,18 @@ async function getStore(req, res) {
       error.message
     )
 
+
     return res.status(500).json({
+
       error:
         "Failed to fetch store"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -263,44 +397,70 @@ async function updateStore(req, res) {
 
   try {
 
-    const updates = req.body
+    const updates =
+      req.body
+
 
     /*
-    Prevent critical overrides
+    --------------------------------
+    PREVENT CRITICAL OVERRIDES
+    --------------------------------
+
+    Currency is controlled by the
+    connected commerce platform.
+
+    The dashboard can display it,
+    but should not arbitrarily alter
+    the financial currency of a
+    connected store.
+    --------------------------------
     */
 
     delete updates.merchant_id
     delete updates.plan
     delete updates.transaction_fee
+    delete updates.currency
+
 
     const store =
       await Store.findOneAndUpdate(
 
         {
+
           _id:
             req.params.id,
 
           merchant_id:
             req.user.id
+
         },
 
         updates,
 
         {
-          new: true,
-          runValidators: true
+
+          new:
+            true,
+
+          runValidators:
+            true
+
         }
 
       )
 
+
     if (!store) {
 
       return res.status(404).json({
+
         error:
           "Store not found"
+
       })
 
     }
+
 
     return res.status(200).json({
 
@@ -311,6 +471,7 @@ async function updateStore(req, res) {
 
     })
 
+
   } catch (error) {
 
     console.error(
@@ -318,14 +479,18 @@ async function updateStore(req, res) {
       error.message
     )
 
+
     return res.status(500).json({
+
       error:
         "Failed to update store"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -341,23 +506,33 @@ async function deleteStore(req, res) {
     const userId =
       req.user.id
 
+
     const totalStores =
       await Store.countDocuments({
-        merchant_id: userId
+
+        merchant_id:
+          userId
+
       })
 
+
     /*
-    Prevent deleting last store
+    Prevent deleting last store.
     */
 
-    if (totalStores <= 1) {
+    if (
+      totalStores <= 1
+    ) {
 
       return res.status(400).json({
+
         error:
           "You must have at least one store"
+
       })
 
     }
+
 
     const store =
       await Store.findOneAndDelete({
@@ -370,19 +545,26 @@ async function deleteStore(req, res) {
 
       })
 
+
     if (!store) {
 
       return res.status(404).json({
+
         error:
           "Store not found"
+
       })
 
     }
 
+
     return res.status(200).json({
+
       message:
         "Store deleted successfully"
+
     })
+
 
   } catch (error) {
 
@@ -391,14 +573,18 @@ async function deleteStore(req, res) {
       error.message
     )
 
+
     return res.status(500).json({
+
       error:
         "Failed to delete store"
+
     })
 
   }
 
 }
+
 
 
 /*
@@ -424,8 +610,10 @@ async function savePaymentSettings(
 
     } = req.body
 
+
     const storeId =
       req.body.store_id
+
 
     const store =
       await Store.findOne({
@@ -438,41 +626,54 @@ async function savePaymentSettings(
 
       })
 
+
     if (!store) {
 
       return res.status(404).json({
+
         error:
           "Store not found"
+
       })
 
     }
 
+
     /*
+    --------------------------------
     SAVE KEYS
+    --------------------------------
     */
 
     store.paystack_public_key =
       paystack_public_key || ""
 
+
     store.paystack_secret_key =
       paystack_secret_key || ""
+
 
     store.stripe_public_key =
       stripe_public_key || ""
 
+
     store.stripe_secret_key =
       stripe_secret_key || ""
 
+
     await store.save()
+
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       message:
         "Payment settings saved"
 
     })
+
 
   } catch (error) {
 
@@ -480,6 +681,7 @@ async function savePaymentSettings(
       "Save payment settings error:",
       error.message
     )
+
 
     return res.status(500).json({
 
@@ -493,6 +695,7 @@ async function savePaymentSettings(
 }
 
 
+
 /*
 --------------------------------
 CONNECT SHOPIFY STORE
@@ -501,12 +704,12 @@ CONNECT SHOPIFY STORE
 Called by the Shopify app after
 Shopify authentication.
 
-This connects the Shopify store
-to the existing AI Commerce User
-and Store models.
+The Shopify app must provide the
+native Shopify store currency.
 
-No separate Shopify merchant
-model is created.
+That currency becomes the canonical
+Store.currency value.
+
 --------------------------------
 */
 
@@ -518,11 +721,26 @@ async function connectShopify(
   try {
 
     const {
+
       shop_id,
       shop_domain,
       shop_name,
       shop_email,
-      access_token
+      access_token,
+
+      /*
+      Native Shopify currency.
+
+      Example:
+
+      USD
+      GBP
+      EUR
+      NGN
+      */
+
+      currency
+
     } = req.body
 
 
@@ -542,6 +760,28 @@ async function connectShopify(
 
         error:
           "Shopify shop information is incomplete"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    NORMALIZE CURRENCY
+    --------------------------------
+    */
+
+    const normalizedCurrency =
+      normalizeCurrency(currency)
+
+
+    if (!normalizedCurrency) {
+
+      return res.status(400).json({
+
+        error:
+          "Shopify store currency is required"
 
       })
 
@@ -572,13 +812,17 @@ async function connectShopify(
         $or: [
 
           {
+
             "shopify.shop_id":
               shop_id
+
           },
 
           {
+
             "shopify.shop_domain":
               normalizedDomain
+
           }
 
         ]
@@ -593,6 +837,7 @@ async function connectShopify(
     */
 
     let user = null
+
 
     if (shop_email) {
 
@@ -618,8 +863,9 @@ async function connectShopify(
     if (store) {
 
       /*
-      If the store already belongs to
-      another user, do not reassign it.
+      --------------------------------
+      PREVENT CROSS-MERCHANT CLAIM
+      --------------------------------
       */
 
       if (
@@ -639,8 +885,9 @@ async function connectShopify(
 
 
       /*
-      If there is no user yet, create
-      one from Shopify merchant data.
+      --------------------------------
+      CREATE USER IF NECESSARY
+      --------------------------------
       */
 
       if (!user) {
@@ -655,6 +902,7 @@ async function connectShopify(
           })
 
         }
+
 
         user =
           await User.create({
@@ -680,28 +928,46 @@ async function connectShopify(
 
 
       /*
-      Update existing connection.
+      --------------------------------
+      UPDATE EXISTING CONNECTION
+      --------------------------------
       */
 
       store.merchant_id =
         user._id
+
 
       store.store_name =
         shop_name ||
         store.store_name ||
         normalizedDomain
 
+
+      /*
+      --------------------------------
+      UPDATE CANONICAL CURRENCY
+      --------------------------------
+      */
+
+      store.currency =
+        normalizedCurrency
+
+
       store.platform =
         "shopify"
+
 
       store.platform_connected =
         true
 
+
       store.platform_connection_status =
         "connected"
 
+
       store.platform_last_sync =
         new Date()
+
 
       store.shopify = {
 
@@ -721,9 +987,12 @@ async function connectShopify(
 
       }
 
+
       await store.save()
 
+
     } else {
+
 
       /*
       --------------------------------
@@ -749,6 +1018,7 @@ async function connectShopify(
           })
 
         }
+
 
         user =
           await User.create({
@@ -782,8 +1052,10 @@ async function connectShopify(
       const userPlan =
         user.plan || "free"
 
+
       const storeLimit =
         getStoreLimit(userPlan)
+
 
       const currentCount =
         await Store.countDocuments({
@@ -792,6 +1064,7 @@ async function connectShopify(
             user._id
 
         })
+
 
       if (
         currentCount >=
@@ -839,6 +1112,17 @@ async function connectShopify(
 
           industry:
             "ecommerce",
+
+
+          /*
+          --------------------------------
+          CANONICAL CURRENCY
+          --------------------------------
+          */
+
+          currency:
+            normalizedCurrency,
+
 
           platform:
             "shopify",
@@ -936,6 +1220,9 @@ async function connectShopify(
         platform:
           store.platform,
 
+        currency:
+          store.currency,
+
         platform_connected:
           store.platform_connected,
 
@@ -946,12 +1233,14 @@ async function connectShopify(
 
     })
 
+
   } catch (error) {
 
     console.error(
       "Shopify connection error:",
       error
     )
+
 
     return res.status(500).json({
 
@@ -963,6 +1252,7 @@ async function connectShopify(
   }
 
 }
+
 
 
 module.exports = {

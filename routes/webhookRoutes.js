@@ -8,9 +8,9 @@ const webhookController =
 
 
 /*
---------------------------------
+================================
 STRIPE WEBHOOK
---------------------------------
+================================
 */
 
 router.post(
@@ -20,9 +20,9 @@ router.post(
 
 
 /*
---------------------------------
+================================
 PAYSTACK WEBHOOK
---------------------------------
+================================
 */
 
 router.post(
@@ -32,18 +32,26 @@ router.post(
 
 
 /*
---------------------------------
+================================
 SHOPIFY WEBHOOK
---------------------------------
-
-Shopify requests are verified using
-the raw request body in the controller.
---------------------------------
+================================
 */
 
 router.post(
   "/shopify",
   webhookController.handleShopifyWebhook
+)
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK
+================================
+*/
+
+router.post(
+  "/woocommerce",
+  webhookController.handleWooCommerceWebhook
 )
 
 

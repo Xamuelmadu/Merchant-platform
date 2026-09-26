@@ -8,12 +8,12 @@ const StoreSchema = new mongoose.Schema({
   --------------------------------
   */
 
-merchant_id: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  required: true,
-  index: true
-},
+  merchant_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+    index: true
+  },
 
 
   /*
@@ -128,10 +128,24 @@ merchant_id: {
 
   woocommerce: {
 
+    /*
+    WooCommerce store URL
+    Example:
+    https://example.com
+    */
+
     store_url: {
       type: String,
       trim: true
     },
+
+
+    /*
+    WooCommerce REST API credentials
+
+    These are created by the WooCommerce
+    plugin during the connection process.
+    */
 
     consumer_key: {
       type: String
@@ -141,10 +155,60 @@ merchant_id: {
       type: String
     },
 
+
+    /*
+    --------------------------------
+    PLUGIN CREDENTIAL
+    --------------------------------
+
+    Persistent credential issued by the
+    Merchant Platform after successful
+    plugin authentication.
+
+    Only the SHA-256 hash is stored.
+    The raw credential is returned once
+    during connection.
+    */
+
+    plugin_credential_hash: {
+      type: String
+    },
+
+
+    /*
+    --------------------------------
+    WEBHOOK SECRET
+    --------------------------------
+
+    Secret shared between the Merchant
+    Platform and WooCommerce plugin.
+
+    Used to verify WooCommerce webhook
+    signatures.
+    */
+
+    webhook_secret: {
+      type: String
+    },
+
+
+    /*
+    --------------------------------
+    CONNECTION STATE
+    --------------------------------
+    */
+
     connected: {
       type: Boolean,
       default: false
     },
+
+
+    /*
+    --------------------------------
+    SYNC STATE
+    --------------------------------
+    */
 
     last_product_sync: {
       type: Date
