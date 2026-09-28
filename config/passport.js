@@ -4,6 +4,13 @@ const GoogleStrategy =
 
 const User = require("../models/user")
 
+
+/*
+================================
+GOOGLE OAUTH CONFIGURATION
+================================
+*/
+
 const clientID =
   process.env.GOOGLE_CLIENT_ID
 
@@ -13,17 +20,56 @@ const clientSecret =
 const backendURL =
   process.env.BACKEND_URL
 
+const callbackURL =
+  process.env.GOOGLE_CALLBACK_URL ||
+  (
+    backendURL
+      ? `${backendURL}/api/auth/google/callback`
+      : null
+  )
+
 
 /*
---------------------------------
-GOOGLE OAUTH
---------------------------------
-Only enable Google OAuth when
-credentials are configured.
---------------------------------
+================================
+VALIDATE GOOGLE CONFIGURATION
+================================
 */
 
-if (clientID && clientSecret && backendURL) {
+if (
+  !clientID ||
+  !clientSecret ||
+  !callbackURL
+) {
+
+  console.error(
+    "❌ Google OAuth is not configured."
+  )
+
+  if (!clientID) {
+    console.error(
+      "Missing GOOGLE_CLIENT_ID"
+    )
+  }
+
+  if (!clientSecret) {
+    console.error(
+      "Missing GOOGLE_CLIENT_SECRET"
+    )
+  }
+
+  if (!callbackURL) {
+    console.error(
+      "Missing GOOGLE_CALLBACK_URL or BACKEND_URL"
+    )
+  }
+
+} else {
+
+  /*
+  --------------------------------
+  GOOGLE STRATEGY
+  --------------------------------
+  */
 
   passport.use(
     new GoogleStrategy(
@@ -33,8 +79,8 @@ if (clientID && clientSecret && backendURL) {
 
         clientSecret,
 
-        callbackURL:
-          `${backendURL}/api/auth/google/callback`
+        callbackURL
+
       },
 
       async (
@@ -46,8 +92,17 @@ if (clientID && clientSecret && backendURL) {
 
         try {
 
+          /*
+          --------------------------------
+          GET GOOGLE EMAIL
+          --------------------------------
+          */
+
           const email =
             profile.emails?.[0]?.value
+              ?.trim()
+              .toLowerCase()
+
 
           if (!email) {
 
@@ -59,10 +114,24 @@ if (clientID && clientSecret && backendURL) {
 
           }
 
+
+          /*
+          --------------------------------
+          FIND EXISTING USER
+          --------------------------------
+          */
+
           let user =
             await User.findOne({
               email
             })
+
+
+          /*
+          --------------------------------
+          CREATE USER
+          --------------------------------
+          */
 
           if (!user) {
 
@@ -70,19 +139,36 @@ if (clientID && clientSecret && backendURL) {
               await User.create({
 
                 name:
-                  profile.displayName,
+                  profile.displayName ||
+                  "Google User",
 
                 email,
 
-                plan: "free"
+                plan:
+                  "free"
 
               })
 
           }
 
-          return done(null, user)
+
+          /*
+          --------------------------------
+          GOOGLE LOGIN SUCCESS
+          --------------------------------
+          */
+
+          return done(
+            null,
+            user
+          )
 
         } catch (error) {
+
+          console.error(
+            "Google OAuth user error:",
+            error
+          )
 
           return done(
             error,
@@ -92,20 +178,26 @@ if (clientID && clientSecret && backendURL) {
         }
 
       }
+
     )
   )
+
 
   console.log(
     "✅ Google OAuth enabled"
   )
 
-} else {
-
   console.log(
-    "ℹ️ Google OAuth disabled: credentials not configured"
+    `Google callback URL: ${callbackURL}`
   )
 
 }
 
+
+/*
+================================
+EXPORT
+================================
+*/
 
 module.exports = passport

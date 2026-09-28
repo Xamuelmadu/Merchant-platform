@@ -1,429 +1,535 @@
 const mongoose = require("mongoose")
 
 
-const StoreSchema = new mongoose.Schema({
+/*
+================================
+ORDER ITEM SCHEMA
+================================
+*/
 
-  /*
-  --------------------------------
-  MERCHANT OWNER
-  --------------------------------
-  */
-
-  merchant_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    index: true
-  },
-
-
-  /*
-  --------------------------------
-  BASIC STORE INFO
-  --------------------------------
-  */
-
-  store_name: {
-    type: String,
-    required: true,
-    trim: true
-  },
-
-  industry: {
-    type: String,
-    default: "ecommerce"
-  },
-
-
-  /*
-  --------------------------------
-  STORE CURRENCY
-  --------------------------------
-
-  Canonical currency for the store.
-
-  This is populated from the native
-  commerce platform during connection
-  or synchronization.
-
-  Examples:
-
-  USD
-  GBP
-  EUR
-  NGN
-  CAD
-  AUD
-
-  New orders copy this value into
-  Order.currency so historical orders
-  retain the currency that applied when
-  they were created.
-  --------------------------------
-  */
-
-  currency: {
-    type: String,
-    required: true,
-    default: "USD",
-    uppercase: true,
-    trim: true,
-    index: true
-  },
-
-
-  /*
-  --------------------------------
-  COMMERCE PLATFORM
-  --------------------------------
-  */
-
-  platform: {
-    type: String,
-    enum: [
-      "shopify",
-      "woocommerce",
-      "other"
-    ],
-    default: "other",
-    index: true
-  },
-
-  platform_connected: {
-    type: Boolean,
-    default: false,
-    index: true
-  },
-
-  platform_connection_status: {
-    type: String,
-    enum: [
-      "disconnected",
-      "connecting",
-      "connected",
-      "error"
-    ],
-    default: "disconnected",
-    index: true
-  },
-
-  platform_last_sync: {
-    type: Date
-  },
-
-  platform_sync_error: {
-    type: String
-  },
-
-
-  /*
-  --------------------------------
-  SHOPIFY INTEGRATION
-  --------------------------------
-  */
-
-  shopify: {
-
-    shop_id: {
-      type: String,
-      index: true
-    },
-
-    shop_domain: {
-      type: String,
-      index: true
-    },
-
-    access_token: {
-      type: String
-    },
-
-    connected: {
-      type: Boolean,
-      default: false
-    },
-
-    last_product_sync: {
-      type: Date
-    },
-
-    last_order_sync: {
-      type: Date
-    },
-
-    last_inventory_sync: {
-      type: Date
-    }
-
-  },
-
-
-  /*
-  --------------------------------
-  WOOCOMMERCE INTEGRATION
-  --------------------------------
-  */
-
-  woocommerce: {
+const OrderItemSchema = new mongoose.Schema(
+  {
 
     /*
-    WooCommerce store URL
-
-    Example:
-    https://example.com
+    --------------------------------
+    INTERNAL PRODUCT
+    --------------------------------
     */
 
-    store_url: {
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: false,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    EXTERNAL PRODUCT
+    --------------------------------
+
+    Shopify / WooCommerce product ID.
+    */
+
+    external_product_id: {
       type: String,
+      default: "",
       trim: true
     },
 
 
     /*
-    WooCommerce REST API credentials
+    --------------------------------
+    PRODUCT INFORMATION SNAPSHOT
+    --------------------------------
+
+    These values are intentionally
+    stored on the order so historical
+    orders remain readable even if the
+    product later changes.
     */
 
-    consumer_key: {
-      type: String
+    name: {
+      type: String,
+      default: "",
+      trim: true
     },
 
-    consumer_secret: {
-      type: String
-    },
-
-
-    /*
-    --------------------------------
-    PLUGIN CREDENTIAL
-    --------------------------------
-    */
-
-    plugin_credential_hash: {
-      type: String
-    },
-
-
-    /*
-    --------------------------------
-    WEBHOOK SECRET
-    --------------------------------
-    */
-
-    webhook_secret: {
-      type: String
+    sku: {
+      type: String,
+      default: "",
+      trim: true
     },
 
 
     /*
     --------------------------------
-    CONNECTION STATE
+    QUANTITY
     --------------------------------
     */
 
-    connected: {
-      type: Boolean,
-      default: false
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
     },
 
 
     /*
     --------------------------------
-    SYNC STATE
+    PRICING SNAPSHOT
     --------------------------------
     */
 
-    last_product_sync: {
+    unit_price: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0
+    },
+
+    total_price: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0
+    }
+
+  },
+  {
+    _id: false
+  }
+)
+
+
+/*
+================================
+ORDER SCHEMA
+================================
+*/
+
+const OrderSchema = new mongoose.Schema(
+  {
+
+    /*
+    --------------------------------
+    STORE
+    --------------------------------
+
+    Every order belongs to exactly
+    one Merchant Platform store.
+    */
+
+    store_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Store",
+      required: true,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    ORDER SOURCE
+    --------------------------------
+
+    Where the order originated.
+
+    Shopify
+    WooCommerce
+    Custom / AI
+    Manual
+    */
+
+    source: {
+      type: String,
+      enum: [
+        "shopify",
+        "woocommerce",
+        "custom",
+        "manual"
+      ],
+      default: "custom",
+      required: true,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    EXTERNAL ORDER IDENTIFIERS
+    --------------------------------
+
+    Used for Shopify / WooCommerce
+    order synchronization.
+    */
+
+    external_id: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true
+    },
+
+    order_number: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    CUSTOMER
+    --------------------------------
+    */
+
+    customer_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Customer",
+      required: false,
+      index: true
+    },
+
+    external_customer_id: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    CUSTOMER SNAPSHOT
+    --------------------------------
+
+    Keep these values on the order
+    because customer information can
+    change after the order is created.
+    */
+
+    customer_name: {
+      type: String,
+      default: "",
+      trim: true
+    },
+
+    customer_email: {
+      type: String,
+      default: "",
+      trim: true,
+      lowercase: true
+    },
+
+    customer_phone: {
+      type: String,
+      default: "",
+      trim: true
+    },
+
+    customer_address: {
+      type: String,
+      default: "",
+      trim: true
+    },
+
+
+    /*
+    --------------------------------
+    ORDER ITEMS
+    --------------------------------
+    */
+
+    items: {
+      type: [OrderItemSchema],
+      default: []
+    },
+
+
+    /*
+    --------------------------------
+    LEGACY PRODUCT FIELDS
+    --------------------------------
+
+    Retained for compatibility with
+    existing controllers and older
+    orders.
+
+    New multi-item orders should use
+    `items`.
+    */
+
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: false,
+      index: true
+    },
+
+    quantity: {
+      type: Number,
+      default: 1,
+      min: 1
+    },
+
+
+    /*
+    --------------------------------
+    FINANCIAL SNAPSHOT
+    --------------------------------
+
+    These values represent the
+    financial state of the order when
+    it was created.
+
+    Historical orders must NOT depend
+    on the Store's current transaction
+    fee or currency.
+    */
+
+    subtotal: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+    total_price: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    ORDER CURRENCY
+    --------------------------------
+
+    Currency at the time the order
+    was created.
+
+    Do NOT calculate historical
+    financials from Store.currency.
+    */
+
+    currency: {
+      type: String,
+      default: "USD",
+      uppercase: true,
+      trim: true
+    },
+
+
+    /*
+    --------------------------------
+    PLATFORM FEE
+    --------------------------------
+
+    Fee charged to the merchant for
+    this specific order.
+
+    This is a historical snapshot.
+    */
+
+    platform_fee: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+
+    /*
+    --------------------------------
+    MERCHANT PAYOUT
+    --------------------------------
+
+    Merchant earnings after the
+    platform fee for this order.
+    */
+
+    merchant_payout: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+
+    /*
+    --------------------------------
+    PAYMENT
+    --------------------------------
+    */
+
+    payment_status: {
+      type: String,
+      enum: [
+        "pending",
+        "paid",
+        "failed",
+        "refunded",
+        "cancelled"
+      ],
+      default: "pending",
+      index: true
+    },
+
+    payment_reference: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true
+    },
+
+    payment_gateway: {
+      type: String,
+      default: "",
+      trim: true
+    },
+
+
+    /*
+    --------------------------------
+    ORDER STATUS
+    --------------------------------
+    */
+
+    order_status: {
+      type: String,
+      enum: [
+        "new",
+        "paid",
+        "completed",
+        "cancelled"
+      ],
+      default: "new",
+      index: true
+    },
+
+
+    /*
+    --------------------------------
+    ORDER DATES
+    --------------------------------
+    */
+
+    ordered_at: {
+      type: Date,
+      default: Date.now,
+      index: true
+    },
+
+    fulfilled_at: {
       type: Date
     },
 
-    last_order_sync: {
-      type: Date
-    },
-
-    last_inventory_sync: {
+    cancelled_at: {
       type: Date
     }
 
   },
+  {
 
+    /*
+    --------------------------------
+    TIMESTAMPS
+    --------------------------------
 
-  /*
-  --------------------------------
-  PLATFORM SUBSCRIPTION
-  --------------------------------
-  */
+    Use snake_case because the existing
+    controllers query `created_at` and
+    `updated_at`.
+    */
 
-  plan: {
-    type: String,
-    enum: [
-      "free",
-      "basic",
-      "pro",
-      "premium"
-    ],
-    default: "free",
-    index: true
-  },
+    timestamps: {
+      createdAt: "created_at",
+      updatedAt: "updated_at"
+    }
 
-  subscription_status: {
-    type: String,
-    enum: [
-      "inactive",
-      "active",
-      "past_due",
-      "cancelled"
-    ],
-    default: "inactive",
-    index: true
-  },
-
-  subscription_renewal: {
-    type: Date
-  },
-
-  billing_grace_until: {
-    type: Date
-  },
-
-  system_locked: {
-    type: Boolean,
-    default: false
-  },
-
-
-  /*
-  --------------------------------
-  ORDER LIMITS
-  --------------------------------
-  */
-
-  monthly_order_limit: {
-    type: Number,
-    default: 20
-  },
-
-  orders_used: {
-    type: Number,
-    default: 0
-  },
-
-
-  /*
-  --------------------------------
-  PLATFORM FEES
-  --------------------------------
-  */
-
-  transaction_fee: {
-    type: Number,
-    default: 0.007
-  },
-
-  total_platform_fees: {
-    type: Number,
-    default: 0
-  },
-
-
-  /*
-  --------------------------------
-  STRIPE PLATFORM BILLING
-  --------------------------------
-  */
-
-  stripe_customer_id: {
-    type: String
-  },
-
-  stripe_payment_method: {
-    type: String
-  },
-
-
-  /*
-  --------------------------------
-  PAYSTACK PLATFORM BILLING
-  --------------------------------
-  */
-
-  paystack_customer_code: {
-    type: String
-  },
-
-  paystack_authorization_code: {
-    type: String
-  },
-
-
-  /*
-  --------------------------------
-  MERCHANT PAYMENT SETTINGS
-  --------------------------------
-  */
-
-  paystack_public_key: {
-    type: String
-  },
-
-  paystack_secret_key: {
-    type: String
-  },
-
-  stripe_public_key: {
-    type: String
-  },
-
-  stripe_secret_key: {
-    type: String
-  },
-
-
-  /*
-  --------------------------------
-  WHATSAPP
-  --------------------------------
-  TEMPORARILY RETAINED
-  --------------------------------
-  */
-
-  whatsapp_number: {
-    type: String,
-    trim: true
-  },
-
-  whatsapp_connected: {
-    type: Boolean,
-    default: false,
-    index: true
   }
+)
 
-}, {
-  timestamps: true
+
+/*
+================================
+INDEXES
+================================
+*/
+
+
+/*
+Store order lookup
+*/
+
+OrderSchema.index({
+  store_id: 1,
+  created_at: -1
 })
 
 
 /*
---------------------------------
-INDEXES
---------------------------------
+Store + status lookup
+
+Used heavily by dashboard and
+financial queries.
 */
 
-StoreSchema.index({
-  merchant_id: 1,
-  platform: 1
+OrderSchema.index({
+  store_id: 1,
+  order_status: 1,
+  created_at: -1
 })
 
-StoreSchema.index({
-  "shopify.shop_domain": 1
+
+/*
+Store + payment status
+*/
+
+OrderSchema.index({
+  store_id: 1,
+  payment_status: 1,
+  created_at: -1
 })
 
-StoreSchema.index({
-  "woocommerce.store_url": 1
+
+/*
+External order synchronization
+
+Prevents repeated searches from
+becoming expensive when syncing
+Shopify/WooCommerce orders.
+*/
+
+OrderSchema.index({
+  store_id: 1,
+  source: 1,
+  external_id: 1
 })
 
+
+/*
+Customer order lookup
+*/
+
+OrderSchema.index({
+  store_id: 1,
+  customer_id: 1,
+  created_at: -1
+})
+
+
+/*
+================================
+MODEL
+================================
+*/
 
 module.exports =
+  mongoose.models.Order ||
   mongoose.model(
-    "Store",
-    StoreSchema
+    "Order",
+    OrderSchema
   )

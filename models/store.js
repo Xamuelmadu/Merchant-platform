@@ -1,5 +1,6 @@
 const mongoose = require("mongoose")
 
+
 const StoreSchema = new mongoose.Schema({
 
   /*
@@ -31,6 +32,43 @@ const StoreSchema = new mongoose.Schema({
   industry: {
     type: String,
     default: "ecommerce"
+  },
+
+
+  /*
+  --------------------------------
+  STORE CURRENCY
+  --------------------------------
+
+  Canonical currency for the store.
+
+  This is populated from the native
+  commerce platform during connection
+  or synchronization.
+
+  Examples:
+
+  USD
+  GBP
+  EUR
+  NGN
+  CAD
+  AUD
+
+  New orders copy this value into
+  Order.currency so historical orders
+  retain the currency that applied when
+  they were created.
+  --------------------------------
+  */
+
+  currency: {
+    type: String,
+    required: true,
+    default: "USD",
+    uppercase: true,
+    trim: true,
+    index: true
   },
 
 
@@ -130,6 +168,7 @@ const StoreSchema = new mongoose.Schema({
 
     /*
     WooCommerce store URL
+
     Example:
     https://example.com
     */
@@ -142,9 +181,6 @@ const StoreSchema = new mongoose.Schema({
 
     /*
     WooCommerce REST API credentials
-
-    These are created by the WooCommerce
-    plugin during the connection process.
     */
 
     consumer_key: {
@@ -160,14 +196,6 @@ const StoreSchema = new mongoose.Schema({
     --------------------------------
     PLUGIN CREDENTIAL
     --------------------------------
-
-    Persistent credential issued by the
-    Merchant Platform after successful
-    plugin authentication.
-
-    Only the SHA-256 hash is stored.
-    The raw credential is returned once
-    during connection.
     */
 
     plugin_credential_hash: {
@@ -179,12 +207,6 @@ const StoreSchema = new mongoose.Schema({
     --------------------------------
     WEBHOOK SECRET
     --------------------------------
-
-    Secret shared between the Merchant
-    Platform and WooCommerce plugin.
-
-    Used to verify WooCommerce webhook
-    signatures.
     */
 
     webhook_secret: {
@@ -400,4 +422,8 @@ StoreSchema.index({
 })
 
 
-module.exports = mongoose.model("Store", StoreSchema)
+module.exports =
+  mongoose.model(
+    "Store",
+    StoreSchema
+  )
