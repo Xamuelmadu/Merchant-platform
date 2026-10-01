@@ -7,6 +7,13 @@ const StoreSchema = new mongoose.Schema({
   --------------------------------
   MERCHANT OWNER
   --------------------------------
+
+  Every store belongs to a User.
+
+  This is the primary relationship
+  between merchant authentication and
+  commerce data.
+  --------------------------------
   */
 
   merchant_id: {
@@ -54,11 +61,6 @@ const StoreSchema = new mongoose.Schema({
   NGN
   CAD
   AUD
-
-  New orders copy this value into
-  Order.currency so historical orders
-  retain the currency that applied when
-  they were created.
   --------------------------------
   */
 
@@ -168,9 +170,6 @@ const StoreSchema = new mongoose.Schema({
 
     /*
     WooCommerce store URL
-
-    Example:
-    https://example.com
     */
 
     store_url: {
@@ -375,26 +374,6 @@ const StoreSchema = new mongoose.Schema({
 
   stripe_secret_key: {
     type: String
-  },
-
-
-  /*
-  --------------------------------
-  WHATSAPP
-  --------------------------------
-  TEMPORARILY RETAINED
-  --------------------------------
-  */
-
-  whatsapp_number: {
-    type: String,
-    trim: true
-  },
-
-  whatsapp_connected: {
-    type: Boolean,
-    default: false,
-    index: true
   }
 
 }, {
@@ -408,19 +387,42 @@ INDEXES
 --------------------------------
 */
 
+/*
+Merchant → platform lookup
+
+Allows us to quickly retrieve all
+stores belonging to a user.
+*/
+
 StoreSchema.index({
   merchant_id: 1,
   platform: 1
 })
 
+
+/*
+Shopify store lookup
+*/
+
 StoreSchema.index({
   "shopify.shop_domain": 1
 })
+
+
+/*
+WooCommerce store lookup
+*/
 
 StoreSchema.index({
   "woocommerce.store_url": 1
 })
 
+
+/*
+--------------------------------
+EXPORT
+--------------------------------
+*/
 
 module.exports =
   mongoose.model(

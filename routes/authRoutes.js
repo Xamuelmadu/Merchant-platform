@@ -1,119 +1,203 @@
 const express = require("express")
+
 const router = express.Router()
-
-const passport = require("passport")
-const jwt = require("jsonwebtoken")
-
-const User = require("../models/user")
 
 const {
   sendOtp,
   verifyOtp,
   refreshToken,
+  getSession,
   logout,
-  googleCallback,
-  generateAccessToken
+
+  /*
+  --------------------------------
+  SHOPIFY IDENTITY
+  --------------------------------
+  */
+
+  identifyShopifyUser,
+  linkShopifyStore
+
 } = require("../controllers/authController")
 
+
+/*
+================================
+EMAIL OTP AUTH
+================================
+
+PRIMARY AI COMMERCE AUTHENTICATION
+
+SIGN UP / SIGN IN
+
+1. User enters email
+2. /send-otp sends verification code
+3. User enters OTP
+4. /verify-otp creates or authenticates
+   the user's account
+5. Session is created
+================================
+*/
+
+router.post(
+  "/send-otp",
+  sendOtp
+)
+
+
+router.post(
+  "/verify-otp",
+  verifyOtp
+)
+
+
+/*
+================================
+SHOPIFY IDENTITY
+================================
+
+The Shopify App is already
+authenticated by Shopify.
+
+These endpoints allow the Shopify
+App to establish the corresponding
+AI Commerce identity.
+
+Shopify authentication proves:
+
+"This request came from the
+authenticated Shopify App."
+
+AI Commerce authentication proves:
+
+"This Shopify merchant belongs to
+this AI Commerce User."
+================================
+*/
+
+
 /*
 --------------------------------
-OTP AUTH (PRIMARY ENTRY)
+IDENTIFY SHOPIFY MERCHANT
+--------------------------------
+
+Used by the Shopify App after
+Shopify authentication.
+
+The endpoint:
+
+1. Finds the Shopify store
+2. Finds its merchant
+3. Creates the AI Commerce
+   identity if necessary
+4. Returns the merchant/store
+   relationship
 --------------------------------
 */
 
-router.post("/send-otp", sendOtp)
-router.post("/verify-otp", verifyOtp)
+router.post(
+  "/shopify/identify",
+  identifyShopifyUser
+)
+
 
 /*
 --------------------------------
+LINK SHOPIFY STORE
+--------------------------------
+
+Used when a Shopify store needs
+to be associated with an existing
+AI Commerce account.
+
+Example:
+
+Existing AI Commerce user:
+
+user@example.com
+
+installs Shopify App
+
+↓
+
+Shopify identity verified
+
+↓
+
+Store gets linked to:
+
+User._id
+--------------------------------
+*/
+
+router.post(
+  "/shopify/link",
+  linkShopifyStore
+)
+
+
+/*
+================================
 TOKEN MANAGEMENT
---------------------------------
+================================
 */
 
-/*
-Refresh access token
-*/
-router.get("/refresh", refreshToken)
-
-/*
-Get current authenticated session
-Used after Google OAuth redirect
-*/
-router.get("/session", async (req, res) => {
-
-  try {
-
-    const refreshTokenCookie = req.cookies.refresh_token
-
-    if (!refreshTokenCookie) {
-      return res.status(401).json({
-        error: "No session"
-      })
-    }
-
-    const decoded = jwt.verify(
-      refreshTokenCookie,
-      process.env.JWT_REFRESH_SECRET
-    )
-
-    const user = await User.findById(decoded.id)
-
-    if (!user) {
-      return res.status(401).json({
-        error: "User not found"
-      })
-    }
-
-    const accessToken = generateAccessToken(user)
-
-    return res.json({
-      token: accessToken,
-      user
-    })
-
-  } catch (error) {
-
-    console.error("Session error:", error)
-
-    return res.status(401).json({
-      error: "Invalid session"
-    })
-
-  }
-
-})
-
-/*
-Logout (clear cookie)
-*/
-router.post("/logout", logout)
 
 /*
 --------------------------------
-GOOGLE OAUTH
+REFRESH ACCESS TOKEN
 --------------------------------
+
+The refresh token is stored in
+an httpOnly cookie.
+
+Returns a new short-lived
+access token.
 */
 
-/*
-Redirect to Google
-*/
 router.get(
-  "/google",
-  passport.authenticate("google", {
-    scope: ["profile", "email"]
-  })
+  "/refresh",
+  refreshToken
 )
 
+
 /*
-Google callback
+--------------------------------
+CURRENT SESSION
+--------------------------------
+
+Used by the webapp and Shopify
+App to restore the authenticated
+AI Commerce merchant after:
+
+- Page refresh
+- Browser reopen
+- Dashboard navigation
+- Access token expiration
+
+The refresh_token cookie identifies
+the AI Commerce User.
 */
+
 router.get(
-  "/google/callback",
-  passport.authenticate("google", {
-    session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/login`
-  }),
-  googleCallback
+  "/session",
+  getSession
 )
+
+
+/*
+--------------------------------
+LOGOUT
+--------------------------------
+
+Clears the AI Commerce refresh
+session.
+*/
+
+router.post(
+  "/logout",
+  logout
+)
+
 
 module.exports = router
