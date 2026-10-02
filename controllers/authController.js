@@ -12,7 +12,7 @@ const crypto = require("crypto")
 
 const {
   sendOtpEmail
-} = require("../services/emailOtpService")
+} = require("../services/emailService")
 
 
 /*
