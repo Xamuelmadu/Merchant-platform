@@ -1,78 +1,37 @@
-const nodemailer =
-  require("nodemailer")
+const { Resend } = require("resend")
 
 
 /*
---------------------------------
-EMAIL TRANSPORT
---------------------------------
+================================
+RESEND CLIENT
+================================
 */
 
-const transporter =
-  nodemailer.createTransport({
-
-    host:
-      process.env.SMTP_HOST,
-
-    port:
-      Number(
-        process.env.SMTP_PORT || 587
-      ),
-
-    secure:
-      String(
-        process.env.SMTP_SECURE
-      ).toLowerCase() === "true",
-
-    auth: {
-
-      user:
-        process.env.SMTP_USER,
-
-      pass:
-        process.env.SMTP_PASSWORD
-
-    }
-
-  })
+const resend = new Resend(
+  process.env.RESEND_API_KEY
+)
 
 
 /*
---------------------------------
-VERIFY EMAIL CONFIGURATION
---------------------------------
+================================
+EMAIL CONFIGURATION
+================================
 */
 
-async function verifyEmailTransport() {
+function getEmailFrom() {
 
-  try {
-
-    await transporter.verify()
-
-    console.log(
-      "✅ Email SMTP connection verified"
-    )
-
-    return true
-
-  } catch (error) {
-
-    console.error(
-      "❌ Email SMTP connection failed:",
-      error.message
-    )
-
-    return false
-
-  }
+  return (
+    process.env.EMAIL_FROM ||
+    "AI Commerce <onboarding@resend.dev>"
+  )
 
 }
 
 
 /*
---------------------------------
+================================
 EMAIL CONTENT
---------------------------------
+================================
 */
 
 function getOtpEmailContent({
@@ -83,15 +42,18 @@ function getOtpEmailContent({
   const isSignup =
     purpose === "signup"
 
+
   const subject =
     isSignup
       ? "Verify your AI Commerce account"
       : "Your AI Commerce sign-in code"
 
+
   const title =
     isSignup
       ? "Verify your email"
       : "Sign-in verification"
+
 
   const description =
     isSignup
@@ -100,9 +62,11 @@ function getOtpEmailContent({
 
       : "Use the verification code below to securely complete your AI Commerce sign-in."
 
+
   return {
 
     subject,
+
 
     html: `
 
@@ -112,51 +76,48 @@ function getOtpEmailContent({
 
         <head>
 
-          <meta
-            charset="UTF-8"
-          />
+          <meta charset="UTF-8" />
 
           <meta
             name="viewport"
             content="width=device-width, initial-scale=1.0"
           />
 
-          <title>
-            ${subject}
-          </title>
+          <title>${subject}</title>
 
         </head>
 
+
         <body
           style="
-            margin: 0;
-            padding: 0;
-            background: #f6f7f9;
-            font-family: Arial, Helvetica, sans-serif;
+            margin:0;
+            padding:0;
+            background:#f6f7f9;
+            font-family:Arial,Helvetica,sans-serif;
           "
         >
 
           <div
             style="
-              max-width: 520px;
-              margin: 0 auto;
-              padding: 40px 20px;
+              max-width:520px;
+              margin:0 auto;
+              padding:40px 20px;
             "
           >
 
             <div
               style="
-                background: #ffffff;
-                border-radius: 12px;
-                padding: 40px 30px;
+                background:#ffffff;
+                border-radius:12px;
+                padding:40px 30px;
               "
             >
 
               <h2
                 style="
-                  margin: 0 0 20px;
-                  color: #111111;
-                  font-size: 24px;
+                  margin:0 0 20px;
+                  color:#111111;
+                  font-size:24px;
                 "
               >
                 ${title}
@@ -165,10 +126,10 @@ function getOtpEmailContent({
 
               <p
                 style="
-                  margin: 0 0 24px;
-                  color: #555555;
-                  font-size: 15px;
-                  line-height: 1.6;
+                  margin:0 0 24px;
+                  color:#555555;
+                  font-size:15px;
+                  line-height:1.6;
                 "
               >
                 ${description}
@@ -177,21 +138,21 @@ function getOtpEmailContent({
 
               <div
                 style="
-                  margin: 30px 0;
-                  padding: 24px;
-                  background: #f5f5f5;
-                  text-align: center;
-                  border-radius: 10px;
+                  margin:30px 0;
+                  padding:24px;
+                  background:#f5f5f5;
+                  text-align:center;
+                  border-radius:10px;
                 "
               >
 
                 <div
                   style="
-                    margin-bottom: 8px;
-                    color: #777777;
-                    font-size: 12px;
-                    text-transform: uppercase;
-                    letter-spacing: 1px;
+                    margin-bottom:8px;
+                    color:#777777;
+                    font-size:12px;
+                    text-transform:uppercase;
+                    letter-spacing:1px;
                   "
                 >
                   Verification code
@@ -200,10 +161,10 @@ function getOtpEmailContent({
 
                 <div
                   style="
-                    color: #111111;
-                    font-size: 32px;
-                    font-weight: 700;
-                    letter-spacing: 8px;
+                    color:#111111;
+                    font-size:32px;
+                    font-weight:700;
+                    letter-spacing:8px;
                   "
                 >
                   ${otp}
@@ -214,25 +175,23 @@ function getOtpEmailContent({
 
               <p
                 style="
-                  margin: 0 0 16px;
-                  color: #555555;
-                  font-size: 14px;
-                  line-height: 1.6;
+                  margin:0 0 16px;
+                  color:#555555;
+                  font-size:14px;
+                  line-height:1.6;
                 "
               >
                 This code expires in
-                <strong>
-                  10 minutes
-                </strong>.
+                <strong>10 minutes</strong>.
               </p>
 
 
               <p
                 style="
-                  margin: 0;
-                  color: #777777;
-                  font-size: 13px;
-                  line-height: 1.6;
+                  margin:0;
+                  color:#777777;
+                  font-size:13px;
+                  line-height:1.6;
                 "
               >
                 If you did not request this code,
@@ -244,10 +203,10 @@ function getOtpEmailContent({
 
             <p
               style="
-                margin: 20px 0 0;
-                text-align: center;
-                color: #999999;
-                font-size: 12px;
+                margin:20px 0 0;
+                text-align:center;
+                color:#999999;
+                font-size:12px;
               "
             >
               AI Commerce
@@ -260,6 +219,7 @@ function getOtpEmailContent({
       </html>
 
     `,
+
 
     text:
       `${title}\n\n` +
@@ -274,9 +234,9 @@ function getOtpEmailContent({
 
 
 /*
---------------------------------
+================================
 SEND OTP EMAIL
---------------------------------
+================================
 */
 
 async function sendOtpEmail({
@@ -303,6 +263,15 @@ async function sendOtpEmail({
   }
 
 
+  if (!process.env.RESEND_API_KEY) {
+
+    throw new Error(
+      "RESEND_API_KEY is not configured"
+    )
+
+  }
+
+
   const normalizedEmail =
     String(email)
       .trim()
@@ -323,6 +292,7 @@ async function sendOtpEmail({
     getOtpEmailContent({
 
       otp,
+
       purpose:
         normalizedPurpose
 
@@ -331,22 +301,40 @@ async function sendOtpEmail({
 
   try {
 
-    const result =
-      await transporter.sendMail({
+    const {
+      data,
+      error
+    } =
+      await resend.emails.send({
 
         from:
-          process.env.EMAIL_FROM,
+          getEmailFrom(),
 
         to:
-          normalizedEmail,
+          [normalizedEmail],
 
         subject,
 
-        text,
+        html,
 
-        html
+        text
 
       })
+
+
+    if (error) {
+
+      console.error(
+        "❌ Resend email error:",
+        error
+      )
+
+      throw new Error(
+        error.message ||
+        "Failed to send verification email"
+      )
+
+    }
 
 
     console.log(
@@ -359,7 +347,7 @@ async function sendOtpEmail({
       success: true,
 
       messageId:
-        result.messageId
+        data?.id || null
 
     }
 
@@ -371,6 +359,7 @@ async function sendOtpEmail({
     )
 
     throw new Error(
+      error.message ||
       "Failed to send verification email"
     )
 
@@ -380,9 +369,38 @@ async function sendOtpEmail({
 
 
 /*
---------------------------------
+================================
+VERIFY RESEND CONFIGURATION
+================================
+*/
+
+async function verifyEmailTransport() {
+
+  if (!process.env.RESEND_API_KEY) {
+
+    console.error(
+      "❌ RESEND_API_KEY is not configured"
+    )
+
+    return false
+
+  }
+
+
+  console.log(
+    "✅ Resend email service configured"
+  )
+
+
+  return true
+
+}
+
+
+/*
+================================
 EXPORTS
---------------------------------
+================================
 */
 
 module.exports = {
