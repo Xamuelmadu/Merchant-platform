@@ -10,15 +10,27 @@ const paymentController =
 
 /*
 ================================
-FLUTTERWAVE PAYMENT VERIFICATION
+PAYSTACK WEBHOOK
 ================================
 */
 
-router.get(
-  "/flutterwave/verify",
-  paymentController.verifyFlutterwavePayment
+router.post(
+  "/paystack/webhook",
+  paymentController.paystackWebhook
 )
 
 
+/*
+================================
+FLUTTERWAVE WEBHOOK
+================================
+*/
+
+router.post(
+  "/flutterwave/webhook",
+  paymentController.flutterwaveWebhook
+)
+
 
 module.exports = router
+
