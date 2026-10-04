@@ -33,14 +33,8 @@ router.post(
 
 /*
 ================================
-FLUTTERWAVE PAYMENT VERIFICATION
+EXPORTS
 ================================
 */
-
-router.get(
-  "/flutterwave/verify",
-  paymentController.verifyFlutterwavePayment
-)
-
 
 module.exports = router

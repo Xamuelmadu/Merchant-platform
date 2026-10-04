@@ -8,22 +8,17 @@ const {
 
 /*
 ================================
-HELPERS
-================================
-*/
-
-function markOrderAsPaid(order) {
-
-  order.payment_status = "paid"
-
-  order.order_status = "paid"
-
-}
-
-
-/*
-================================
 PAYSTACK WEBHOOK
+================================
+
+Receives Paystack webhook events.
+
+The webhook payload is NOT trusted
+for payment confirmation.
+
+We verify the transaction directly
+with Paystack before updating the
+order.
 ================================
 */
 
@@ -37,7 +32,7 @@ async function paystackWebhook(req, res) {
 
     /*
     --------------------------------
-    ONLY PROCESS SUCCESSFUL CHARGES
+    ONLY PROCESS SUCCESSFUL PAYMENTS
     --------------------------------
     */
 
@@ -51,6 +46,12 @@ async function paystackWebhook(req, res) {
     }
 
 
+    /*
+    --------------------------------
+    PAYMENT REFERENCE
+    --------------------------------
+    */
+
     const reference =
       event?.data?.reference
 
@@ -58,7 +59,39 @@ async function paystackWebhook(req, res) {
     if (!reference) {
 
       console.error(
-        "Paystack webhook missing reference"
+        "Paystack webhook missing payment reference"
+      )
+
+      return res.sendStatus(200)
+
+    }
+
+
+    /*
+    --------------------------------
+    VERIFY WITH PAYSTACK
+    --------------------------------
+    */
+
+    const verification =
+      await verifyPaystack(
+        reference
+      )
+
+
+    const transaction =
+      verification?.data
+
+
+    if (
+      !transaction ||
+      transaction.status !==
+        "success"
+    ) {
+
+      console.error(
+        "Paystack transaction verification failed:",
+        reference
       )
 
       return res.sendStatus(200)
@@ -84,7 +117,7 @@ async function paystackWebhook(req, res) {
     if (!order) {
 
       console.error(
-        "Paystack webhook order not found:",
+        "Paystack order not found:",
         reference
       )
 
@@ -98,8 +131,10 @@ async function paystackWebhook(req, res) {
     IDEMPOTENCY
     --------------------------------
 
-    Do not process an already-paid
-    order again.
+    If the webhook is delivered more
+    than once, do not process the
+    payment repeatedly.
+    --------------------------------
     */
 
     if (
@@ -114,69 +149,50 @@ async function paystackWebhook(req, res) {
 
     /*
     --------------------------------
-    VERIFY PAYMENT
+    VERIFY AMOUNT
     --------------------------------
 
-    Never trust the webhook payload
-    alone. Verify the transaction
-    directly with Paystack.
-    */
+    Paystack amounts are returned
+    in the smallest currency unit.
 
-    const verification =
-      await verifyPaystack(
-        reference
-      )
+    Example:
 
-
-    const transaction =
-      verification?.data
-
-
-    if (
-      !transaction ||
-      transaction.status !==
-        "success"
-    ) {
-
-      console.error(
-        "Paystack payment verification failed:",
-        reference
-      )
-
-      return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    AMOUNT VALIDATION
+    NGN 5,000
+    =
+    500000
     --------------------------------
     */
+
+    const expectedAmount =
+      Math.round(
+        Number(
+          order.total_price
+        ) * 100
+      )
+
 
     const paidAmount =
       Number(
-        transaction.amount || 0
-      ) / 100
-
-
-    const expectedAmount =
-      Number(
-        order.total_price || 0
+        transaction.amount
       )
 
 
     if (
-      paidAmount <
+      paidAmount !==
       expectedAmount
     ) {
 
       console.error(
         "Paystack payment amount mismatch:",
         {
-          reference,
-          paidAmount,
-          expectedAmount
+          order_id:
+            order._id,
+
+          expected:
+            expectedAmount,
+
+          received:
+            paidAmount
         }
       )
 
@@ -187,42 +203,95 @@ async function paystackWebhook(req, res) {
 
     /*
     --------------------------------
-    MARK ORDER PAID
+    VERIFY CURRENCY
     --------------------------------
     */
 
-    markOrderAsPaid(
-      order
-    )
+    const expectedCurrency =
+      String(
+        order.currency ||
+        "NGN"
+      )
+        .trim()
+        .toUpperCase()
 
+
+    const paidCurrency =
+      String(
+        transaction.currency ||
+        ""
+      )
+        .trim()
+        .toUpperCase()
+
+
+    if (
+      paidCurrency &&
+      paidCurrency !==
+        expectedCurrency
+    ) {
+
+      console.error(
+        "Paystack payment currency mismatch:",
+        {
+          order_id:
+            order._id,
+
+          expected:
+            expectedCurrency,
+
+          received:
+            paidCurrency
+        }
+      )
+
+      return res.sendStatus(200)
+
+    }
+
+
+    /*
+    --------------------------------
+    UPDATE ORDER
+    --------------------------------
+    */
+
+    order.payment_status =
+      "paid"
+
+    order.order_status =
+      "paid"
 
     order.payment_gateway =
       "paystack"
 
-
-    order.payment_reference =
-      reference
+    order.payment_transaction_id =
+      String(
+        transaction.id ||
+        ""
+      )
 
 
     await order.save()
 
 
     console.log(
-      "Paystack payment confirmed:",
+      "✅ Paystack payment confirmed:",
       order._id
     )
 
 
     return res.sendStatus(200)
 
+
   } catch (error) {
 
     console.error(
-      "Paystack webhook error:",
+      "❌ Paystack webhook error:",
       error.response?.data ||
-      error.message
+      error.message ||
+      error
     )
-
 
     return res.sendStatus(500)
 
@@ -236,13 +305,14 @@ async function paystackWebhook(req, res) {
 FLUTTERWAVE WEBHOOK
 ================================
 
-Flutterwave sends a webhook after
-a transaction changes state.
+Receives Flutterwave webhook events.
 
-The webhook is NOT trusted by itself.
+The webhook payload is NOT trusted
+for payment confirmation.
 
-We use the Flutterwave transaction ID
-to perform server-side verification.
+The transaction is verified directly
+against Flutterwave before the order
+is marked as paid.
 ================================
 */
 
@@ -259,21 +329,7 @@ async function flutterwaveWebhook(
 
     /*
     --------------------------------
-    LOG WEBHOOK EVENT
-    --------------------------------
-    */
-
-    console.log(
-      "Flutterwave webhook received:",
-      JSON.stringify(
-        event
-      )
-    )
-
-
-    /*
-    --------------------------------
-    EXTRACT TRANSACTION DATA
+    TRANSACTION DATA
     --------------------------------
     */
 
@@ -281,104 +337,17 @@ async function flutterwaveWebhook(
       event?.data?.id
 
 
-    const txRef =
+    const webhookReference =
       event?.data?.tx_ref
 
 
-    const status =
-      event?.data?.status
-
-
-    /*
-    --------------------------------
-    IGNORE INVALID WEBHOOKS
-    --------------------------------
-    */
-
     if (
-      !transactionId &&
-      !txRef
+      !transactionId ||
+      !webhookReference
     ) {
-
-      return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    ONLY PROCESS SUCCESS EVENTS
-    --------------------------------
-    */
-
-    if (
-      status &&
-      status !== "successful"
-    ) {
-
-      return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND ORDER
-    --------------------------------
-
-    tx_ref is our internal reference:
-
-    order_<mongodb_id>
-    */
-
-    let order = null
-
-
-    if (txRef) {
-
-      order =
-        await Order.findOne({
-
-          payment_reference:
-            txRef
-
-        })
-
-    }
-
-
-    /*
-    --------------------------------
-    FALLBACK TO TRANSACTION ID
-    --------------------------------
-    */
-
-    if (
-      !order &&
-      transactionId
-    ) {
-
-      order =
-        await Order.findOne({
-
-          payment_transaction_id:
-            String(
-              transactionId
-            )
-
-        })
-
-    }
-
-
-    if (!order) {
 
       console.error(
-        "Flutterwave webhook order not found:",
-        {
-          txRef,
-          transactionId
-        }
+        "Flutterwave webhook missing transaction ID or reference"
       )
 
       return res.sendStatus(200)
@@ -388,37 +357,9 @@ async function flutterwaveWebhook(
 
     /*
     --------------------------------
-    IDEMPOTENCY
+    VERIFY TRANSACTION
     --------------------------------
     */
-
-    if (
-      order.payment_status ===
-      "paid"
-    ) {
-
-      return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    VERIFY DIRECTLY WITH FLUTTERWAVE
-    --------------------------------
-    */
-
-    if (!transactionId) {
-
-      console.error(
-        "Flutterwave webhook has no transaction ID:",
-        txRef
-      )
-
-      return res.sendStatus(200)
-
-    }
-
 
     const verification =
       await verifyFlutterwave(
@@ -443,12 +384,42 @@ async function flutterwaveWebhook(
     ) {
 
       console.error(
-        "Flutterwave payment verification failed:",
+        "Flutterwave transaction verification failed:",
+        webhookReference
+      )
+
+      return res.sendStatus(200)
+
+    }
+
+
+    /*
+    --------------------------------
+    VERIFY PAYMENT REFERENCE
+    --------------------------------
+    */
+
+    const verifiedReference =
+      transaction.tx_ref
+
+
+    if (
+      String(
+        verifiedReference
+      ) !==
+      String(
+        webhookReference
+      )
+    ) {
+
+      console.error(
+        "Flutterwave payment reference mismatch:",
         {
-          transactionId,
-          txRef,
-          status:
-            transaction?.status
+          webhook:
+            webhookReference,
+
+          verified:
+            verifiedReference
         }
       )
 
@@ -459,24 +430,81 @@ async function flutterwaveWebhook(
 
     /*
     --------------------------------
-    VERIFY TX REF
+    FIND ORDER
+    --------------------------------
+    */
+
+    const order =
+      await Order.findOne({
+
+        payment_reference:
+          webhookReference
+
+      })
+
+
+    if (!order) {
+
+      console.error(
+        "Flutterwave order not found:",
+        webhookReference
+      )
+
+      return res.sendStatus(200)
+
+    }
+
+
+    /*
+    --------------------------------
+    IDEMPOTENCY
     --------------------------------
     */
 
     if (
-      transaction.tx_ref &&
-      transaction.tx_ref !==
-        order.payment_reference
+      order.payment_status ===
+      "paid"
+    ) {
+
+      return res.sendStatus(200)
+
+    }
+
+
+    /*
+    --------------------------------
+    VERIFY AMOUNT
+    --------------------------------
+    */
+
+    const expectedAmount =
+      Number(
+        order.total_price
+      )
+
+
+    const paidAmount =
+      Number(
+        transaction.amount
+      )
+
+
+    if (
+      paidAmount !==
+      expectedAmount
     ) {
 
       console.error(
-        "Flutterwave tx_ref mismatch:",
+        "Flutterwave payment amount mismatch:",
         {
-          transactionTxRef:
-            transaction.tx_ref,
+          order_id:
+            order._id,
 
-          orderReference:
-            order.payment_reference
+          expected:
+            expectedAmount,
+
+          received:
+            paidAmount
         }
       )
 
@@ -491,7 +519,16 @@ async function flutterwaveWebhook(
     --------------------------------
     */
 
-    const transactionCurrency =
+    const expectedCurrency =
+      String(
+        order.currency ||
+        "NGN"
+      )
+        .trim()
+        .toUpperCase()
+
+
+    const paidCurrency =
       String(
         transaction.currency ||
         ""
@@ -500,322 +537,26 @@ async function flutterwaveWebhook(
         .toUpperCase()
 
 
-    const orderCurrency =
-      String(
-        order.currency ||
-        ""
-      )
-        .trim()
-        .toUpperCase()
-
-
     if (
-      transactionCurrency &&
-      orderCurrency &&
-      transactionCurrency !==
-        orderCurrency
+      paidCurrency !==
+      expectedCurrency
     ) {
 
       console.error(
-        "Flutterwave currency mismatch:",
+        "Flutterwave payment currency mismatch:",
         {
-          transactionCurrency,
-          orderCurrency
+          order_id:
+            order._id,
+
+          expected:
+            expectedCurrency,
+
+          received:
+            paidCurrency
         }
       )
 
       return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    VERIFY AMOUNT
-    --------------------------------
-    */
-
-    const paidAmount =
-      Number(
-        transaction.amount || 0
-      )
-
-
-    const expectedAmount =
-      Number(
-        order.total_price || 0
-      )
-
-
-    if (
-      paidAmount <
-      expectedAmount
-    ) {
-
-      console.error(
-        "Flutterwave payment amount mismatch:",
-        {
-          transactionId,
-          paidAmount,
-          expectedAmount
-        }
-      )
-
-      return res.sendStatus(200)
-
-    }
-
-
-    /*
-    --------------------------------
-    SAVE TRANSACTION ID
-    --------------------------------
-    */
-
-    order.payment_transaction_id =
-      String(
-        transaction.id ||
-        transactionId
-      )
-
-
-    order.payment_reference =
-      transaction.tx_ref ||
-      order.payment_reference
-
-
-    order.payment_gateway =
-      "flutterwave"
-
-
-    /*
-    --------------------------------
-    MARK ORDER PAID
-    --------------------------------
-    */
-
-    markOrderAsPaid(
-      order
-    )
-
-
-    await order.save()
-
-
-    console.log(
-      "Flutterwave payment confirmed:",
-      order._id
-    )
-
-
-    return res.sendStatus(200)
-
-  } catch (error) {
-
-    console.error(
-      "Flutterwave webhook error:",
-      error.response?.data ||
-      error.message
-    )
-
-
-    return res.sendStatus(500)
-
-  }
-
-}
-
-
-/*
-================================
-MANUAL PAYMENT VERIFICATION
-================================
-
-Useful for the frontend redirect
-after Flutterwave checkout.
-
-The customer returns to the
-dashboard with a transaction ID.
-
-The server verifies directly with
-Flutterwave before changing the
-order status.
-================================
-*/
-
-async function verifyFlutterwavePayment(
-  req,
-  res
-) {
-
-  try {
-
-    const {
-      transaction_id,
-      tx_ref
-    } = req.query
-
-
-    if (
-      !transaction_id &&
-      !tx_ref
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "transaction_id or tx_ref is required"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND ORDER
-    --------------------------------
-    */
-
-    let order = null
-
-
-    if (tx_ref) {
-
-      order =
-        await Order.findOne({
-
-          payment_reference:
-            tx_ref
-
-        })
-
-    }
-
-
-    if (
-      !order &&
-      transaction_id
-    ) {
-
-      order =
-        await Order.findOne({
-
-          payment_transaction_id:
-            String(
-              transaction_id
-            )
-
-        })
-
-    }
-
-
-    if (!order) {
-
-      return res.status(404).json({
-
-        success: false,
-
-        error:
-          "Order not found"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    VERIFY TRANSACTION
-    --------------------------------
-    */
-
-    const verification =
-      await verifyFlutterwave(
-        transaction_id
-      )
-
-
-    const transaction =
-      verification?.data
-
-
-    if (
-      !transaction ||
-      transaction.status !==
-        "successful"
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        payment_status:
-          "failed"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    VERIFY REFERENCE
-    --------------------------------
-    */
-
-    if (
-      transaction.tx_ref &&
-      transaction.tx_ref !==
-        order.payment_reference
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Payment reference mismatch"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    VERIFY AMOUNT
-    --------------------------------
-    */
-
-    const paidAmount =
-      Number(
-        transaction.amount || 0
-      )
-
-
-    const expectedAmount =
-      Number(
-        order.total_price || 0
-      )
-
-
-    if (
-      paidAmount <
-      expectedAmount
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Payment amount mismatch"
-
-      })
 
     }
 
@@ -838,67 +579,32 @@ async function verifyFlutterwavePayment(
     order.payment_transaction_id =
       String(
         transaction.id ||
-        transaction_id
+        transactionId
       )
 
 
     await order.save()
 
 
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
+    console.log(
+      "✅ Flutterwave payment confirmed:",
+      order._id
+    )
 
-    return res.json({
 
-      success: true,
+    return res.sendStatus(200)
 
-      message:
-        "Payment verified successfully",
-
-      order: {
-
-        id:
-          order._id,
-
-        payment_status:
-          order.payment_status,
-
-        order_status:
-          order.order_status,
-
-        payment_gateway:
-          order.payment_gateway,
-
-        payment_reference:
-          order.payment_reference,
-
-        payment_transaction_id:
-          order.payment_transaction_id
-
-      }
-
-    })
 
   } catch (error) {
 
     console.error(
-      "Flutterwave payment verification error:",
+      "❌ Flutterwave webhook error:",
       error.response?.data ||
-      error.message
+      error.message ||
+      error
     )
 
-
-    return res.status(500).json({
-
-      success: false,
-
-      error:
-        "Payment verification failed"
-
-    })
+    return res.sendStatus(500)
 
   }
 
@@ -915,8 +621,6 @@ module.exports = {
 
   paystackWebhook,
 
-  flutterwaveWebhook,
-
-  verifyFlutterwavePayment
+  flutterwaveWebhook
 
 }
