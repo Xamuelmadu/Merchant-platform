@@ -3,56 +3,38 @@ const express = require("express")
 const router =
   express.Router()
 
-const webhookController =
-  require("../controllers/webhookController")
+const {
+  flutterwaveWebhook
+} = require("../controllers/webhookController")
 
-
-/*
-================================
-STRIPE WEBHOOK
-================================
-*/
-
-router.post(
-  "/stripe",
-  webhookController.handleStripeWebhook
-)
 
 
 /*
 ================================
-PAYSTACK WEBHOOK
+FLUTTERWAVE WEBHOOK
+================================
+
+Handles platform subscription
+payments through Flutterwave.
+
+Merchant customer checkout does
+NOT use this webhook.
+
+Shopify customers use Shopify
+checkout.
+
+WooCommerce customers use
+WooCommerce checkout.
+
+Paystack has been removed.
 ================================
 */
 
 router.post(
-  "/paystack",
-  webhookController.handlePaystackWebhook
+  "/flutterwave-webhook",
+  flutterwaveWebhook
 )
 
-
-/*
-================================
-SHOPIFY WEBHOOK
-================================
-*/
-
-router.post(
-  "/shopify",
-  webhookController.handleShopifyWebhook
-)
-
-
-/*
-================================
-WOOCOMMERCE WEBHOOK
-================================
-*/
-
-router.post(
-  "/woocommerce",
-  webhookController.handleWooCommerceWebhook
-)
 
 
 module.exports = router

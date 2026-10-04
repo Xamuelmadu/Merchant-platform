@@ -7,34 +7,18 @@ const paymentController =
   require("../controllers/paymentController")
 
 
+
 /*
 ================================
-PAYSTACK WEBHOOK
+FLUTTERWAVE PAYMENT VERIFICATION
 ================================
 */
 
-router.post(
-  "/paystack-webhook",
-  paymentController.paystackWebhook
+router.get(
+  "/flutterwave/verify",
+  paymentController.verifyFlutterwavePayment
 )
 
 
-/*
-================================
-FLUTTERWAVE WEBHOOK
-================================
-*/
-
-router.post(
-  "/flutterwave-webhook",
-  paymentController.flutterwaveWebhook
-)
-
-
-/*
-================================
-EXPORTS
-================================
-*/
 
 module.exports = router
