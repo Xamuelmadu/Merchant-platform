@@ -385,6 +385,13 @@ const OrderSchema = new mongoose.Schema(
       index: true
     },
 
+    payment_transaction_id: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true
+    },
+
     payment_gateway: {
       type: String,
       default: "",

@@ -1076,15 +1076,32 @@ async function createInternalOrder(
 
 
       if (
-        payment?.reference
-      ) {
+  payment?.reference ||
+  payment?.transaction_id
+) {
 
-        order.payment_reference =
-          payment.reference
+  if (payment?.reference) {
 
-        await order.save()
+    order.payment_reference =
+      payment.reference
 
-      }
+  }
+
+  if (payment?.transaction_id) {
+
+    order.payment_transaction_id =
+      String(
+        payment.transaction_id
+      )
+
+  }
+
+  order.payment_gateway =
+    gateway
+
+  await order.save()
+
+}
 
     } catch (
       paymentError
@@ -1144,9 +1161,14 @@ async function createInternalOrder(
         null,
 
       payment_reference:
-        payment?.reference ||
-        order.payment_reference ||
-        null
+  payment?.reference ||
+  order.payment_reference ||
+  null,
+
+payment_transaction_id:
+  payment?.transaction_id ||
+  order.payment_transaction_id ||
+  null
 
     })
 
