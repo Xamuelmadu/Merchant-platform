@@ -2,18 +2,18 @@ const Store = require("../models/store")
 const Product = require("../models/product")
 const Order = require("../models/order")
 
-const { processPayment } = require("../services/paymentRouter")
-const { sendWhatsAppMessage } = require("../services/whatsappService")
+const { checkUsageLimit } =
+  require("../services/usageGuard")
 
-const { checkUsageLimit } = require("../services/usageGuard")
-const { enforceSubscription } = require("../services/subscriptionGuard")
+const { enforceSubscription } =
+  require("../services/subscriptionGuard")
 
 
 
 /*
---------------------------------
+================================
 STORE CURRENCY HELPER
---------------------------------
+================================
 
 The Store is the canonical owner
 of the currency used for commerce.
@@ -24,7 +24,7 @@ the time the order is created.
 This preserves historical financial
 accuracy if the store currency is
 changed later.
---------------------------------
+================================
 */
 
 function getStoreCurrency(store) {
@@ -43,9 +43,23 @@ function getStoreCurrency(store) {
 
 
 /*
---------------------------------
+================================
 CREATE ORDER
---------------------------------
+================================
+
+IMPORTANT:
+
+Guava no longer processes customer
+payments directly from this endpoint.
+
+The customer uses the merchant's
+native Shopify or WooCommerce
+checkout/payment gateway.
+
+This endpoint is therefore only
+responsible for creating a Guava
+order record when required.
+================================
 */
 
 async function createOrder(req, res) {
@@ -56,16 +70,91 @@ async function createOrder(req, res) {
       product_id,
       quantity = 1,
       customer_name,
+      customer_email = "",
       customer_phone,
       customer_address,
-      gateway = "paystack"
+      source = "custom",
+      external_id = "",
+      order_number = ""
     } = req.body
 
+
+    /*
+    --------------------------------
+    VALIDATE PRODUCT
+    --------------------------------
+    */
 
     if (!product_id) {
 
       return res.status(400).json({
-        error: "product_id is required"
+
+        success: false,
+
+        error:
+          "product_id is required"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    VALIDATE QUANTITY
+    --------------------------------
+    */
+
+    const parsedQuantity =
+      Number(quantity)
+
+
+    if (
+      !Number.isInteger(
+        parsedQuantity
+      ) ||
+      parsedQuantity < 1
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "quantity must be a positive integer"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    VALIDATE SOURCE
+    --------------------------------
+    */
+
+    const validSources = [
+      "shopify",
+      "woocommerce",
+      "custom",
+      "manual"
+    ]
+
+
+    if (
+      !validSources.includes(
+        source
+      )
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Invalid order source"
+
       })
 
     }
@@ -103,9 +192,11 @@ async function createOrder(req, res) {
     const product =
       await Product.findOne({
 
-        _id: product_id,
+        _id:
+          product_id,
 
-        store_id: store._id
+        store_id:
+          store._id
 
       })
 
@@ -113,7 +204,52 @@ async function createOrder(req, res) {
     if (!product) {
 
       return res.status(404).json({
-        error: "Product not found"
+
+        success: false,
+
+        error:
+          "Product not found"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    INVENTORY CHECK
+    --------------------------------
+
+    Only enforce inventory when the
+    product has an actual stock value.
+
+    This prevents breaking products
+    that use external inventory
+    management such as Shopify or
+    WooCommerce.
+    --------------------------------
+    */
+
+    if (
+      product.stock !== undefined &&
+      product.stock !== null &&
+      Number.isFinite(
+        Number(product.stock)
+      ) &&
+      Number(product.stock) <
+        parsedQuantity
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Insufficient product stock",
+
+        available_stock:
+          Number(product.stock)
+
       })
 
     }
@@ -122,11 +258,6 @@ async function createOrder(req, res) {
     /*
     --------------------------------
     CURRENCY
-    --------------------------------
-
-    The Store owns the currency.
-
-    Do not use product.currency here.
     --------------------------------
     */
 
@@ -140,9 +271,17 @@ async function createOrder(req, res) {
     --------------------------------
     */
 
+    const unitPrice =
+      Number(product.price) || 0
+
+
+    const subtotal =
+      unitPrice *
+      parsedQuantity
+
+
     const total =
-      Number(product.price || 0) *
-      Number(quantity || 1)
+      subtotal
 
 
     const feeRate =
@@ -151,17 +290,27 @@ async function createOrder(req, res) {
 
 
     const platformFee =
-      total * feeRate
+      total *
+      feeRate
 
 
     const merchantPayout =
-      total - platformFee
-
+      total -
+      platformFee
 
 
     /*
     --------------------------------
     CREATE ORDER
+    --------------------------------
+
+    This is a Guava order record.
+
+    Payment remains pending because
+    Guava is NOT processing payment.
+
+    Shopify/WooCommerce handles the
+    actual checkout and payment.
     --------------------------------
     */
 
@@ -171,29 +320,89 @@ async function createOrder(req, res) {
         store_id:
           store._id,
 
-        source:
-          "manual",
+        source,
 
-        product_id,
+        external_id:
+          external_id || "",
 
-        quantity,
+        order_number:
+          order_number || "",
 
-        customer_name,
+        customer_name:
+          customer_name || "",
 
-        customer_phone,
+        customer_email:
+          customer_email || "",
 
-        customer_address,
+        customer_phone:
+          customer_phone || "",
 
-        subtotal:
-          total,
+        customer_address:
+          customer_address || "",
+
+
+        /*
+        --------------------------------
+        ORDER ITEMS
+        --------------------------------
+        */
+
+        items: [
+
+          {
+
+            product_id:
+              product._id,
+
+            external_product_id:
+              product.external_id ||
+              "",
+
+            name:
+              product.name ||
+              "",
+
+            sku:
+              product.sku ||
+              "",
+
+            quantity:
+              parsedQuantity,
+
+            unit_price:
+              unitPrice,
+
+            total_price:
+              subtotal
+
+          }
+
+        ],
+
+
+        /*
+        --------------------------------
+        LEGACY COMPATIBILITY
+        --------------------------------
+        */
+
+        product_id:
+          product._id,
+
+        quantity:
+          parsedQuantity,
+
+
+        /*
+        --------------------------------
+        FINANCIAL SNAPSHOT
+        --------------------------------
+        */
+
+        subtotal,
 
         total_price:
           total,
-
-        /*
-        Currency is captured at the
-        moment the order is created.
-        */
 
         currency,
 
@@ -203,52 +412,44 @@ async function createOrder(req, res) {
         merchant_payout:
           merchantPayout,
 
+
+        /*
+        --------------------------------
+        PAYMENT
+        --------------------------------
+
+        Guava does not collect the
+        payment here.
+
+        The native Shopify or
+        WooCommerce checkout owns
+        payment state.
+        --------------------------------
+        */
+
         payment_status:
           "pending",
 
-        /*
-        order_status flow:
+        payment_reference:
+          "",
 
-        new → paid → completed
+        payment_gateway:
+          "",
+
+
+        /*
+        --------------------------------
+        ORDER STATUS
+        --------------------------------
         */
 
         order_status:
-          "new"
+          "new",
+
+        ordered_at:
+          new Date()
 
       })
-
-
-    /*
-    --------------------------------
-    SEND WHATSAPP NOTIFICATION
-    --------------------------------
-    */
-
-    try {
-
-      const message = `
-🛒 New Order
-
-Customer: ${customer_name}
-Product: ${product.name}
-Quantity: ${quantity}
-Amount: ${currency} ${total}
-Payment: Pending
-`
-
-      await sendWhatsAppMessage(
-        store.whatsapp_number,
-        message
-      )
-
-    } catch (err) {
-
-      console.error(
-        "WhatsApp notification failed:",
-        err.message
-      )
-
-    }
 
 
     /*
@@ -260,52 +461,43 @@ Payment: Pending
     store.orders_used =
       (store.orders_used || 0) + 1
 
+
     await store.save()
-
-
-    /*
-    --------------------------------
-    PROCESS PAYMENT
-    --------------------------------
-    */
-
-    const payment =
-      await processPayment(
-        gateway,
-        order
-      )
-
-
-    /*
-    --------------------------------
-    SAVE PAYMENT REFERENCE
-    --------------------------------
-    */
-
-    order.payment_reference =
-      payment.reference
-
-    await order.save()
 
 
     /*
     --------------------------------
     RESPONSE
     --------------------------------
+
+    There is deliberately NO:
+
+    payment_link
+    payment_reference
+    payment_gateway
+
+    because Guava does not initiate
+    payment for this flow.
+    --------------------------------
     */
 
-    return res.json({
+    return res.status(201).json({
+
+      success: true,
 
       message:
         "Order created successfully",
 
       order,
 
-      payment_gateway:
-        gateway,
+      checkout:
+        null,
 
-      payment_link:
-        payment.payment_link
+      payment_required:
+        false,
+
+      payment_processing:
+        "merchant_native_checkout"
 
     })
 
@@ -314,17 +506,22 @@ Payment: Pending
 
     console.error(
       "Create order error:",
-      error.message
+      error
     )
 
 
     return res.status(500).json({
 
+      success: false,
+
       error:
         "Order creation failed",
 
       details:
-        error.message
+        process.env.NODE_ENV ===
+        "production"
+          ? undefined
+          : error.message
 
     })
 
@@ -335,9 +532,9 @@ Payment: Pending
 
 
 /*
---------------------------------
+================================
 GET ALL ORDERS
---------------------------------
+================================
 */
 
 async function getOrders(req, res) {
@@ -350,12 +547,19 @@ async function getOrders(req, res) {
 
     const orders =
       await Order
+
         .find({
-          store_id: store._id
+          store_id:
+            store._id
         })
-        .populate("product_id")
+
+        .populate(
+          "product_id"
+        )
+
         .sort({
-          created_at: -1
+          created_at:
+            -1
         })
 
 
@@ -366,10 +570,24 @@ async function getOrders(req, res) {
 
   } catch (error) {
 
+    console.error(
+      "Get orders error:",
+      error.message
+    )
+
+
     return res.status(500).json({
 
+      success: false,
+
       error:
-        error.message
+        "Unable to fetch orders",
+
+      details:
+        process.env.NODE_ENV ===
+        "production"
+          ? undefined
+          : error.message
 
     })
 
@@ -380,12 +598,15 @@ async function getOrders(req, res) {
 
 
 /*
---------------------------------
+================================
 GET SINGLE ORDER
---------------------------------
+================================
 */
 
-async function getOrderById(req, res) {
+async function getOrderById(
+  req,
+  res
+) {
 
   try {
 
@@ -395,6 +616,7 @@ async function getOrderById(req, res) {
 
     const order =
       await Order
+
         .findOne({
 
           _id:
@@ -404,12 +626,17 @@ async function getOrderById(req, res) {
             store._id
 
         })
-        .populate("product_id")
+
+        .populate(
+          "product_id"
+        )
 
 
     if (!order) {
 
       return res.status(404).json({
+
+        success: false,
 
         error:
           "Order not found"
@@ -426,10 +653,24 @@ async function getOrderById(req, res) {
 
   } catch (error) {
 
+    console.error(
+      "Get order error:",
+      error.message
+    )
+
+
     return res.status(500).json({
 
+      success: false,
+
       error:
-        error.message
+        "Unable to fetch order",
+
+      details:
+        process.env.NODE_ENV ===
+        "production"
+          ? undefined
+          : error.message
 
     })
 
@@ -440,21 +681,24 @@ async function getOrderById(req, res) {
 
 
 /*
---------------------------------
+================================
 UPDATE ORDER STATUS
---------------------------------
+================================
 
-Used for:
+Used by:
 
-- admin completion
-- bank transfer confirmation
-
-The order is explicitly scoped to
-the authenticated merchant's store.
---------------------------------
+- Admin
+- Shopify synchronization
+- WooCommerce synchronization
+- Internal order processing
+- Fulfillment workflows
+================================
 */
 
-async function updateOrderStatus(req, res) {
+async function updateOrderStatus(
+  req,
+  res
+) {
 
   try {
 
@@ -466,8 +710,11 @@ async function updateOrderStatus(req, res) {
     const validStatuses = [
 
       "new",
+
       "paid",
+
       "completed",
+
       "cancelled"
 
     ]
@@ -481,6 +728,8 @@ async function updateOrderStatus(req, res) {
 
       return res.status(400).json({
 
+        success: false,
+
         error:
           "Invalid status"
 
@@ -489,13 +738,9 @@ async function updateOrderStatus(req, res) {
     }
 
 
-    const store =
-      req.store
-
-
     /*
     --------------------------------
-    STORE-SCOPED LOOKUP
+    FIND ORDER
     --------------------------------
     */
 
@@ -506,7 +751,7 @@ async function updateOrderStatus(req, res) {
           req.params.id,
 
         store_id:
-          store._id
+          req.store._id
 
       })
 
@@ -514,6 +759,8 @@ async function updateOrderStatus(req, res) {
     if (!order) {
 
       return res.status(404).json({
+
+        success: false,
 
         error:
           "Order not found"
@@ -523,22 +770,32 @@ async function updateOrderStatus(req, res) {
     }
 
 
+    /*
+    --------------------------------
+    UPDATE ORDER STATUS
+    --------------------------------
+    */
+
     order.order_status =
       status
 
 
     /*
     --------------------------------
-    PAYMENT STATUS
+    PAYMENT STATE
     --------------------------------
 
-    Completed orders are considered
-    paid.
+    Payment is only marked paid when
+    the external commerce platform has
+    confirmed the payment/order state.
 
+    This controller does NOT verify
+    Paystack or Flutterwave payments.
     --------------------------------
     */
 
     if (
+      status === "paid" ||
       status === "completed"
     ) {
 
@@ -548,10 +805,39 @@ async function updateOrderStatus(req, res) {
     }
 
 
+    if (
+      status === "cancelled"
+    ) {
+
+      order.payment_status =
+        order.payment_status ===
+        "paid"
+          ? "paid"
+          : "cancelled"
+
+      order.cancelled_at =
+        new Date()
+
+    }
+
+
+    if (
+      status === "completed"
+    ) {
+
+      order.fulfilled_at =
+        order.fulfilled_at ||
+        new Date()
+
+    }
+
+
     await order.save()
 
 
     return res.json({
+
+      success: true,
 
       message:
         "Order status updated",
@@ -563,10 +849,24 @@ async function updateOrderStatus(req, res) {
 
   } catch (error) {
 
+    console.error(
+      "Update order status error:",
+      error.message
+    )
+
+
     return res.status(500).json({
 
+      success: false,
+
       error:
-        error.message
+        "Unable to update order status",
+
+      details:
+        process.env.NODE_ENV ===
+        "production"
+          ? undefined
+          : error.message
 
     })
 
@@ -577,18 +877,18 @@ async function updateOrderStatus(req, res) {
 
 
 /*
---------------------------------
+================================
 RECENT COMPLETED ORDERS
---------------------------------
+================================
 
 Used by the financial dashboard.
-
-Only completed orders count as
-realized revenue.
---------------------------------
+================================
 */
 
-async function getRecentOrders(req, res) {
+async function getRecentOrders(
+  req,
+  res
+) {
 
   try {
 
@@ -606,9 +906,12 @@ async function getRecentOrders(req, res) {
           "completed"
 
       })
+
       .sort({
-        created_at: -1
+        created_at:
+          -1
       })
+
       .limit(20)
 
 
@@ -619,10 +922,24 @@ async function getRecentOrders(req, res) {
 
   } catch (error) {
 
+    console.error(
+      "Get recent orders error:",
+      error.message
+    )
+
+
     return res.status(500).json({
 
+      success: false,
+
       error:
-        error.message
+        "Unable to fetch recent orders",
+
+      details:
+        process.env.NODE_ENV ===
+        "production"
+          ? undefined
+          : error.message
 
     })
 
@@ -633,19 +950,28 @@ async function getRecentOrders(req, res) {
 
 
 /*
---------------------------------
+================================
 INTERNAL AI ORDER CREATION
---------------------------------
+================================
 
-Used by the AI Engine.
+Used by the AI Commerce Engine.
 
-The Engine does not have merchant
+The AI Engine does not use merchant
 JWT authentication, so this endpoint
 uses the internal platform key.
 
-This creates the canonical order
-inside the Merchant Platform.
---------------------------------
+IMPORTANT:
+
+This endpoint creates the canonical
+Guava order record.
+
+It does NOT create a Paystack,
+Flutterwave, or Stripe payment.
+
+The AI Commerce Engine should instead
+return/use the merchant's native
+Shopify or WooCommerce checkout URL.
+================================
 */
 
 async function createInternalOrder(
@@ -715,7 +1041,9 @@ async function createInternalOrder(
 
       source = "custom",
 
-      gateway = "paystack"
+      external_id = "",
+
+      order_number = ""
 
     } = req.body
 
@@ -780,8 +1108,11 @@ async function createInternalOrder(
     const validSources = [
 
       "shopify",
+
       "woocommerce",
+
       "custom",
+
       "manual"
 
     ]
@@ -833,18 +1164,6 @@ async function createInternalOrder(
 
     /*
     --------------------------------
-    CANONICAL STORE CURRENCY
-    --------------------------------
-    */
-
-    const currency =
-      getStoreCurrency(
-        store
-      )
-
-
-    /*
-    --------------------------------
     FIND PRODUCT
     --------------------------------
     */
@@ -879,11 +1198,28 @@ async function createInternalOrder(
     --------------------------------
     INVENTORY CHECK
     --------------------------------
+
+    Do not enforce stock if the
+    merchant's external commerce
+    platform is responsible for
+    inventory.
+    --------------------------------
     */
 
+    const usesExternalInventory =
+      source === "shopify" ||
+      source === "woocommerce"
+
+
     if (
+      !usesExternalInventory &&
+      product.stock !== undefined &&
+      product.stock !== null &&
+      Number.isFinite(
+        Number(product.stock)
+      ) &&
       Number(product.stock) <
-      parsedQuantity
+        parsedQuantity
     ) {
 
       return res.status(400).json({
@@ -908,7 +1244,8 @@ async function createInternalOrder(
     */
 
     const unitPrice =
-      Number(product.price) || 0
+      Number(product.price) ||
+      0
 
 
     const subtotal =
@@ -918,6 +1255,12 @@ async function createInternalOrder(
 
     const total =
       subtotal
+
+
+    const currency =
+      getStoreCurrency(
+        store
+      )
 
 
     const feeRate =
@@ -949,6 +1292,19 @@ async function createInternalOrder(
 
         source,
 
+        external_id:
+          external_id || "",
+
+        order_number:
+          order_number || "",
+
+
+        /*
+        --------------------------------
+        CUSTOMER
+        --------------------------------
+        */
+
         customer_id:
           customer_id ||
           undefined,
@@ -965,6 +1321,13 @@ async function createInternalOrder(
 
         customer_address,
 
+
+        /*
+        --------------------------------
+        ORDER ITEMS
+        --------------------------------
+        */
+
         items: [
 
           {
@@ -977,7 +1340,12 @@ async function createInternalOrder(
               "",
 
             name:
-              product.name,
+              product.name ||
+              "",
+
+            sku:
+              product.sku ||
+              "",
 
             quantity:
               parsedQuantity,
@@ -1005,26 +1373,19 @@ async function createInternalOrder(
         quantity:
           parsedQuantity,
 
+
+        /*
+        --------------------------------
+        FINANCIAL SNAPSHOT
+        --------------------------------
+        */
+
         subtotal,
 
         total_price:
           total,
 
-
-        /*
-        --------------------------------
-        FINANCIAL CURRENCY
-        --------------------------------
-
-        The Store is authoritative.
-
-        The Product currency is not used
-        to determine the order currency.
-        --------------------------------
-        */
-
         currency,
-
 
         platform_fee:
           platformFee,
@@ -1033,8 +1394,27 @@ async function createInternalOrder(
           merchantPayout,
 
 
+        /*
+        --------------------------------
+        PAYMENT
+        --------------------------------
+        */
+
         payment_status:
           "pending",
+
+        payment_reference:
+          "",
+
+        payment_gateway:
+          "",
+
+
+        /*
+        --------------------------------
+        ORDER STATUS
+        --------------------------------
+        */
 
         order_status:
           "new",
@@ -1054,92 +1434,20 @@ async function createInternalOrder(
     store.orders_used =
       (store.orders_used || 0) + 1
 
+
     await store.save()
 
 
     /*
     --------------------------------
-    PROCESS PAYMENT
-    --------------------------------
-    */
-
-    let payment = null
-
-
-    try {
-
-      payment =
-        await processPayment(
-          gateway,
-          order
-        )
-
-
-      if (
-  payment?.reference ||
-  payment?.transaction_id
-) {
-
-  if (payment?.reference) {
-
-    order.payment_reference =
-      payment.reference
-
-  }
-
-  if (payment?.transaction_id) {
-
-    order.payment_transaction_id =
-      String(
-        payment.transaction_id
-      )
-
-  }
-
-  order.payment_gateway =
-    gateway
-
-  await order.save()
-
-}
-
-    } catch (
-      paymentError
-    ) {
-
-      console.error(
-        "Internal order payment error:",
-        paymentError.message
-      )
-
-
-      /*
-      Keep the order.
-
-      Payment can be retried without
-      losing the order itself.
-      */
-
-      return res.status(201).json({
-
-        success: true,
-
-        payment_required:
-          true,
-
-        payment_error:
-          paymentError.message,
-
-        order
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
     RESPONSE
+    --------------------------------
+
+    No payment link is generated.
+
+    The AI Commerce layer should use
+    the merchant's Shopify/WooCommerce
+    native checkout separately.
     --------------------------------
     */
 
@@ -1152,23 +1460,23 @@ async function createInternalOrder(
 
       order,
 
-      payment_gateway:
-        gateway,
+      checkout: {
 
-      payment_link:
-        payment?.payment_link ||
-        payment?.authorization_url ||
-        null,
+        provider:
+          source === "shopify"
+            ? "shopify"
+            : source ===
+              "woocommerce"
+              ? "woocommerce"
+              : null,
 
-      payment_reference:
-  payment?.reference ||
-  order.payment_reference ||
-  null,
+        native:
+          true
 
-payment_transaction_id:
-  payment?.transaction_id ||
-  order.payment_transaction_id ||
-  null
+      },
+
+      payment_processing:
+        "merchant_native_checkout"
 
     })
 
@@ -1201,6 +1509,12 @@ payment_transaction_id:
 }
 
 
+
+/*
+================================
+EXPORTS
+================================
+*/
 
 module.exports = {
 

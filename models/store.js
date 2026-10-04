@@ -52,15 +52,6 @@ const StoreSchema = new mongoose.Schema({
   This is populated from the native
   commerce platform during connection
   or synchronization.
-
-  Examples:
-
-  USD
-  GBP
-  EUR
-  NGN
-  CAD
-  AUD
   --------------------------------
   */
 
@@ -264,6 +255,35 @@ const StoreSchema = new mongoose.Schema({
     index: true
   },
 
+
+  /*
+  --------------------------------
+  BILLING CYCLE
+  --------------------------------
+
+  Controls whether the merchant's
+  current subscription is monthly
+  or yearly.
+  --------------------------------
+  */
+
+  billing_cycle: {
+    type: String,
+    enum: [
+      "monthly",
+      "yearly"
+    ],
+    default: "yearly",
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  SUBSCRIPTION STATUS
+  --------------------------------
+  */
+
   subscription_status: {
     type: String,
     enum: [
@@ -276,17 +296,84 @@ const StoreSchema = new mongoose.Schema({
     index: true
   },
 
+
+  /*
+  --------------------------------
+  SUBSCRIPTION RENEWAL
+  --------------------------------
+  */
+
   subscription_renewal: {
     type: Date
   },
+
+
+  /*
+  --------------------------------
+  BILLING GRACE PERIOD
+  --------------------------------
+  */
 
   billing_grace_until: {
     type: Date
   },
 
+
+  /*
+  --------------------------------
+  SYSTEM LOCK
+  --------------------------------
+  */
+
   system_locked: {
     type: Boolean,
     default: false
+  },
+
+
+  /*
+  --------------------------------
+  PENDING SUBSCRIPTION
+  --------------------------------
+
+  These fields hold the subscription
+  selected by the merchant while the
+  Flutterwave payment is still pending.
+
+  IMPORTANT:
+
+  The actual plan is NOT changed until
+  payment has been verified successfully.
+  --------------------------------
+  */
+
+  pending_plan: {
+    type: String,
+    enum: [
+      "free",
+      "basic",
+      "pro",
+      "premium"
+    ],
+    default: null
+  },
+
+
+  pending_billing_cycle: {
+    type: String,
+    enum: [
+      "monthly",
+      "yearly"
+    ],
+    default: null
+  },
+
+
+  pending_subscription_reference: {
+    type: String,
+    default: "",
+    trim: true,
+    index: true
   },
 
 
@@ -310,6 +397,14 @@ const StoreSchema = new mongoose.Schema({
   /*
   --------------------------------
   PLATFORM FEES
+  --------------------------------
+
+  This is the transaction fee charged
+  by the Merchant Platform on commerce
+  transactions.
+
+  It is completely separate from the
+  subscription price.
   --------------------------------
   */
 
@@ -343,6 +438,13 @@ const StoreSchema = new mongoose.Schema({
   --------------------------------
   PAYSTACK PLATFORM BILLING
   --------------------------------
+
+  Retained for existing platform
+  fee infrastructure.
+
+  Flutterwave is used for USD
+  subscription checkout.
+  --------------------------------
   */
 
   paystack_customer_code: {
@@ -357,6 +459,13 @@ const StoreSchema = new mongoose.Schema({
   /*
   --------------------------------
   MERCHANT PAYMENT SETTINGS
+  --------------------------------
+
+  These belong to the merchant's
+  native commerce checkout.
+
+  They are NOT used for platform
+  subscription billing.
   --------------------------------
   */
 
@@ -382,16 +491,14 @@ const StoreSchema = new mongoose.Schema({
 
 
 /*
---------------------------------
+================================
 INDEXES
---------------------------------
+================================
 */
+
 
 /*
 Merchant → platform lookup
-
-Allows us to quickly retrieve all
-stores belonging to a user.
 */
 
 StoreSchema.index({
@@ -419,12 +526,33 @@ StoreSchema.index({
 
 
 /*
---------------------------------
+Pending subscription lookup
+*/
+
+StoreSchema.index({
+  pending_subscription_reference: 1
+})
+
+
+/*
+Subscription management lookup
+*/
+
+StoreSchema.index({
+  plan: 1,
+  subscription_status: 1,
+  subscription_renewal: 1
+})
+
+
+/*
+================================
 EXPORT
---------------------------------
+================================
 */
 
 module.exports =
+  mongoose.models.Store ||
   mongoose.model(
     "Store",
     StoreSchema
