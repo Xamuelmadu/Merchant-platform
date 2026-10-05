@@ -1,18 +1,12 @@
-const User = require("../models/user")
+const jwt = require("jsonwebtoken")
+const crypto = require("crypto")
+const bcrypt = require("bcryptjs")
 
+const User = require("../models/user")
 const Store = require("../models/store")
 
-const Otp = require("../models/otp")
-
-
-const jwt = require("jsonwebtoken")
-
-const crypto = require("crypto")
-
-
-const {
-  sendOtpEmail
-} = require("../services/emailService")
+const emailService =
+  require("../services/emailService")
 
 
 /*
@@ -20,7 +14,6 @@ const {
 TOKEN HELPERS
 ================================
 */
-
 
 function generateAccessToken(user) {
 
@@ -86,7 +79,6 @@ the Shopify App to our backend.
 ================================
 */
 
-
 function authenticatePlatformRequest(
   req
 ) {
@@ -117,7 +109,6 @@ function authenticatePlatformRequest(
 CREATE SESSION
 ================================
 */
-
 
 async function createSessionAndRespond(
   res,
@@ -206,10 +197,9 @@ async function createSessionAndRespond(
 
 /*
 ================================
-NORMALIZE EMAIL
+EMAIL HELPERS
 ================================
 */
-
 
 function normalizeEmail(email) {
 
@@ -228,7 +218,6 @@ VALIDATE EMAIL
 ================================
 */
 
-
 function isValidEmail(email) {
 
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -240,521 +229,34 @@ function isValidEmail(email) {
 
 /*
 ================================
-SEND EMAIL OTP
-================================
-
-Used for:
-
-1. New account verification
-2. Existing user sign-in verification
-
-The backend determines whether this
-is signup or signin based on whether
-the user already exists.
-================================
-*/
-
-
-async function sendOtp(req, res) {
-
-  try {
-
-    const email =
-      normalizeEmail(
-        req.body.email
-      )
-
-
-    /*
-    --------------------------------
-    VALIDATE EMAIL
-    --------------------------------
-    */
-
-    if (!email) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Email is required"
-
-      })
-
-    }
-
-
-    if (!isValidEmail(email)) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Invalid email address"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    CHECK ACCOUNT
-    --------------------------------
-    */
-
-    const existingUser =
-      await User.findOne({
-
-        email
-
-      })
-
-
-    /*
-    --------------------------------
-    DETERMINE OTP PURPOSE
-    --------------------------------
-    */
-
-    const purpose =
-      existingUser
-        ? "signin"
-        : "signup"
-
-
-    /*
-    --------------------------------
-    GENERATE OTP
-    --------------------------------
-    */
-
-    const otp =
-      crypto
-
-        .randomInt(
-          100000,
-          1000000
-        )
-
-        .toString()
-
-
-    /*
-    --------------------------------
-    REMOVE OLD OTP
-    --------------------------------
-    */
-
-    await Otp.deleteMany({
-
-      email
-
-    })
-
-
-    /*
-    --------------------------------
-    CREATE OTP
-    --------------------------------
-    */
-
-    await Otp.create({
-
-      email,
-
-      otp,
-
-      purpose,
-
-      expires_at:
-
-        new Date(
-
-          Date.now() +
-
-          10 *
-
-          60 *
-
-          1000
-
-        )
-
-    })
-
-
-    /*
-    --------------------------------
-    SEND EMAIL
-    --------------------------------
-    */
-
-    await sendOtpEmail({
-
-      email,
-
-      otp,
-
-      purpose
-
-    })
-
-
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
-
-    return res.json({
-
-      success: true,
-
-      message:
-        "OTP sent to your email",
-
-      purpose
-
-    })
-
-  } catch (error) {
-
-    console.error(
-
-      "Send email OTP error:",
-
-      error
-
-    )
-
-
-    return res.status(500).json({
-
-      success: false,
-
-      error:
-        "Failed to send OTP"
-
-    })
-
-  }
-
-}
-
-
-/*
-================================
-VERIFY EMAIL OTP
-================================
-
-Handles:
-
-1. New account creation
-2. Existing user sign-in
-
-The user only receives a session
-after successful OTP verification.
-================================
-*/
-
-
-async function verifyOtp(req, res) {
-
-  try {
-
-    const email =
-      normalizeEmail(
-        req.body.email
-      )
-
-
-    const otp =
-      String(
-        req.body.otp || ""
-      ).trim()
-
-
-    /*
-    --------------------------------
-    VALIDATE EMAIL
-    --------------------------------
-    */
-
-    if (!email) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Email is required"
-
-      })
-
-    }
-
-
-    if (!isValidEmail(email)) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Invalid email address"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    VALIDATE OTP
-    --------------------------------
-    */
-
-    if (!otp) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "OTP is required"
-
-      })
-
-    }
-
-
-    if (!/^\d{6}$/.test(otp)) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "OTP must be a 6-digit code"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND OTP
-    --------------------------------
-    */
-
-    const record =
-      await Otp.findOne({
-
-        email
-
-      })
-
-
-    if (!record) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Invalid or expired OTP"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    CHECK OTP
-    --------------------------------
-    */
-
-    if (record.otp !== otp) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "Invalid OTP"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    CHECK EXPIRATION
-    --------------------------------
-    */
-
-    if (
-      record.expires_at <
-      new Date()
-    ) {
-
-      await Otp.deleteMany({
-
-        email
-
-      })
-
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "OTP expired"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    FIND EXISTING USER
-    --------------------------------
-    */
-
-    let user =
-      await User.findOne({
-
-        email
-
-      })
-
-
-    /*
-    --------------------------------
-    CREATE NEW USER
-    --------------------------------
-
-    A user is created only after
-    successful OTP verification.
-    --------------------------------
-    */
-
-    if (!user) {
-
-      user =
-        await User.create({
-
-          email,
-
-          name:
-            email.split("@")[0],
-
-          password:
-            null,
-
-          plan:
-            "free"
-
-        })
-
-    }
-
-
-    /*
-    --------------------------------
-    DELETE USED OTP
-    --------------------------------
-    */
-
-    await Otp.deleteMany({
-
-      email
-
-    })
-
-
-    /*
-    --------------------------------
-    CREATE SESSION
-    --------------------------------
-    */
-
-    return createSessionAndRespond(
-
-      res,
-
-      user
-
-    )
-
-  } catch (error) {
-
-    console.error(
-
-      "Verify OTP error:",
-
-      error
-
-    )
-
-
-    return res.status(500).json({
-
-      success: false,
-
-      error:
-        "OTP verification failed"
-
-    })
-
-  }
-
-}
-
-
-/*
-================================
-SHOPIFY IDENTITY
+IDENTIFY SHOPIFY MERCHANT
 ================================
 
 POST /api/auth/shopify/identify
 
-The Shopify App calls this after
+Used by the Shopify App after
 Shopify authentication.
 
-The purpose is to answer:
+The Shopify App sends:
 
-"Which AI Commerce User owns this
-Shopify store?"
+- shop_id
+- shop_domain
+- shop_name
+- shop_email
+- currency
 
-There are three possible states:
+The backend then:
 
-1. Existing Shopify store
-   → existing merchant returned
-
-2. Existing AI Commerce user but
-   Shopify store is not connected
-   → store is linked
-
-3. Completely new merchant
-   → account creation is returned
-      as requiring email verification
-
-The Shopify App does NOT become the
-owner of the identity.
-
-AI Commerce owns the User record.
+1. Authenticates the Shopify App
+2. Finds an existing Shopify store
+3. Finds the associated merchant
+4. Creates a store for an existing
+   AI Commerce merchant
+5. Returns an identity requiring
+   email verification for a new
+   merchant
 ================================
 */
-
 
 async function identifyShopifyUser(
   req,
@@ -795,9 +297,16 @@ async function identifyShopifyUser(
       shop_id,
       shop_domain,
       shop_name,
-      shop_email
+      shop_email,
+      currency
     } = req.body
 
+
+    /*
+    --------------------------------
+    NORMALIZE SHOP DOMAIN
+    --------------------------------
+    */
 
     const normalizedDomain =
       String(
@@ -807,10 +316,43 @@ async function identifyShopifyUser(
         .toLowerCase()
 
 
+    /*
+    --------------------------------
+    NORMALIZE EMAIL
+    --------------------------------
+    */
+
     const normalizedEmail =
       normalizeEmail(
         shop_email
       )
+
+
+    /*
+    --------------------------------
+    NORMALIZE CURRENCY
+    --------------------------------
+
+    Shopify is authoritative for
+    the store's currency.
+
+    Examples:
+
+    USD
+    NGN
+    GBP
+    EUR
+    CAD
+    AUD
+    --------------------------------
+    */
+
+    const normalizedCurrency =
+      String(
+        currency || "USD"
+      )
+        .trim()
+        .toUpperCase()
 
 
     /*
@@ -848,9 +390,9 @@ async function identifyShopifyUser(
 
 
     /*
-    --------------------------------
+    =================================
     FIND EXISTING SHOPIFY STORE
-    --------------------------------
+    =================================
     */
 
     let store =
@@ -877,9 +419,9 @@ async function identifyShopifyUser(
 
 
     /*
-    --------------------------------
-    EXISTING STORE
-    --------------------------------
+    =================================
+    EXISTING SHOPIFY STORE
+    =================================
     */
 
     if (store) {
@@ -912,81 +454,79 @@ async function identifyShopifyUser(
 
       /*
       --------------------------------
+      ENSURE SHOPIFY OBJECT EXISTS
+      --------------------------------
+      */
+
+      store.shopify =
+        store.shopify || {}
+
+
+      /*
+      --------------------------------
       UPDATE SHOPIFY IDENTITY
       --------------------------------
       */
 
-      let changed = false
-
-
-      if (
-        store.shopify?.shop_id !==
+      store.shopify.shop_id =
         String(shop_id)
-      ) {
-
-        store.shopify.shop_id =
-          String(shop_id)
-
-        changed = true
-
-      }
 
 
-      if (
-        store.shopify?.shop_domain !==
+      store.shopify.shop_domain =
         normalizedDomain
-      ) {
-
-        store.shopify.shop_domain =
-          normalizedDomain
-
-        changed = true
-
-      }
 
 
-      if (
-        !store.platform_connected
-      ) {
+      store.shopify.connected =
+        true
 
-        store.platform_connected =
-          true
 
-        changed = true
+      /*
+      --------------------------------
+      UPDATE STORE NAME
+      --------------------------------
+      */
+
+      if (shop_name) {
+
+        store.store_name =
+          shop_name
 
       }
 
 
-      if (
-        store.platform_connection_status !==
+      /*
+      --------------------------------
+      UPDATE CURRENCY
+      --------------------------------
+      */
+
+      store.currency =
+        normalizedCurrency
+
+
+      /*
+      --------------------------------
+      CONNECTION STATE
+      --------------------------------
+      */
+
+      store.platform =
+        "shopify"
+
+      store.platform_connected =
+        true
+
+      store.platform_connection_status =
         "connected"
-      ) {
-
-        store.platform_connection_status =
-          "connected"
-
-        changed = true
-
-      }
 
 
-      if (
-        !store.shopify.connected
-      ) {
+      /*
+      --------------------------------
+      SAVE STORE
+      --------------------------------
+      */
 
-        store.shopify.connected =
-          true
-
-        changed = true
-
-      }
-
-
-      if (changed) {
-
-        await store.save()
-
-      }
+      await store.save()
 
 
       /*
@@ -1029,6 +569,12 @@ async function identifyShopifyUser(
       )
 
 
+      /*
+      --------------------------------
+      RETURN EXISTING IDENTITY
+      --------------------------------
+      */
+
       return res.json({
 
         success: true,
@@ -1054,9 +600,13 @@ async function identifyShopifyUser(
 
 
     /*
-    --------------------------------
-    SHOPIFY STORE DOES NOT EXIST
-    --------------------------------
+    =================================
+    NEW SHOPIFY STORE
+    =================================
+
+    The store does not currently
+    exist in AI Commerce.
+    =================================
     */
 
     if (!normalizedEmail) {
@@ -1088,9 +638,9 @@ async function identifyShopifyUser(
 
 
     /*
-    --------------------------------
+    =================================
     FIND EXISTING AI COMMERCE USER
-    --------------------------------
+    =================================
     */
 
     let user =
@@ -1103,20 +653,20 @@ async function identifyShopifyUser(
 
 
     /*
-    --------------------------------
-    EXISTING USER
-    --------------------------------
-
-    The Shopify store can be linked
-    immediately because the merchant
-    already owns an AI Commerce account.
-
-    --------------------------------
+    =================================
+    EXISTING AI COMMERCE USER
+    =================================
     */
 
     if (user) {
 
-      store =
+      /*
+      --------------------------------
+      CHECK EXISTING SHOPIFY STORE
+      --------------------------------
+      */
+
+      const existingShopifyStore =
         await Store.findOne({
 
           merchant_id:
@@ -1128,14 +678,7 @@ async function identifyShopifyUser(
         })
 
 
-      /*
-      --------------------------------
-      USER ALREADY HAS ANOTHER
-      SHOPIFY STORE
-      --------------------------------
-      */
-
-      if (store) {
+      if (existingShopifyStore) {
 
         return res.status(409).json({
 
@@ -1151,7 +694,7 @@ async function identifyShopifyUser(
 
       /*
       --------------------------------
-      CREATE STORE
+      CREATE SHOPIFY STORE
       --------------------------------
       */
 
@@ -1169,7 +712,7 @@ async function identifyShopifyUser(
             "ecommerce",
 
           currency:
-            "USD",
+            normalizedCurrency,
 
           platform:
             "shopify",
@@ -1218,16 +761,14 @@ async function identifyShopifyUser(
     NEW AI COMMERCE MERCHANT
     =================================
 
-    IMPORTANT:
-
     We do NOT create the account yet.
 
     The merchant must verify ownership
-    of the Shopify email through our
-    email OTP flow.
+    of the Shopify email through the
+    AI Commerce email OTP flow.
 
-    This preserves AI Commerce as the
-    owner of its own identity system.
+    This keeps AI Commerce as the
+    owner of its authentication system.
     =================================
     */
 
@@ -1257,7 +798,10 @@ async function identifyShopifyUser(
           shop_name || null,
 
         email:
-          normalizedEmail
+          normalizedEmail,
+
+        currency:
+          normalizedCurrency
 
       }
 
@@ -1266,11 +810,8 @@ async function identifyShopifyUser(
   } catch (error) {
 
     console.error(
-
       "Shopify identity error:",
-
       error
-
     )
 
 
@@ -1295,123 +836,45 @@ async function identifyShopifyUser(
 
 /*
 ================================
-LINK SHOPIFY STORE
-================================
-
-POST /api/auth/shopify/link
-
-Called after a merchant has an
-AI Commerce identity.
-
-This endpoint connects the Shopify
-store to the authenticated AI Commerce
-User.
-
-The Shopify App supplies the merchant
-email and Shopify identity.
+SEND OTP
 ================================
 */
 
-
-async function linkShopifyStore(
+async function sendOtp(
   req,
   res
 ) {
 
   try {
 
-    /*
-    --------------------------------
-    INTERNAL PLATFORM AUTH
-    --------------------------------
-    */
-
-    if (
-      !authenticatePlatformRequest(req)
-    ) {
-
-      return res.status(401).json({
-
-        success: false,
-
-        error:
-          "Unauthorized platform request"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    INPUT
-    --------------------------------
-    */
-
-    const {
-      shop_id,
-      shop_domain,
-      shop_name,
-      shop_email
-    } = req.body
-
-
-    const normalizedDomain =
-      String(
-        shop_domain || ""
-      )
-        .trim()
-        .toLowerCase()
-
-
-    const normalizedEmail =
+    const email =
       normalizeEmail(
-        shop_email
+        req.body.email
       )
 
 
-    /*
-    --------------------------------
-    VALIDATION
-    --------------------------------
-    */
-
-    if (!shop_id) {
+    if (!email) {
 
       return res.status(400).json({
 
         success: false,
 
         error:
-          "shop_id is required"
+          "Email is required"
 
       })
 
     }
 
 
-    if (!normalizedDomain) {
+    if (!isValidEmail(email)) {
 
       return res.status(400).json({
 
         success: false,
 
         error:
-          "shop_domain is required"
-
-      })
-
-    }
-
-
-    if (!normalizedEmail) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error:
-          "shop_email is required"
+          "Invalid email"
 
       })
 
@@ -1426,10 +889,141 @@ async function linkShopifyStore(
 
     const user =
       await User.findOne({
+        email
+      })
 
-        email:
-          normalizedEmail
 
+    /*
+    --------------------------------
+    GENERATE OTP
+    --------------------------------
+    */
+
+    const otp =
+      String(
+        Math.floor(
+          100000 +
+          Math.random() *
+          900000
+        )
+      )
+
+
+    const otpHash =
+      crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex")
+
+
+    /*
+    --------------------------------
+    OTP STORAGE
+    --------------------------------
+    */
+
+    if (user) {
+
+      user.otp_hash =
+        otpHash
+
+      user.otp_expires_at =
+        new Date(
+          Date.now() +
+          10 *
+          60 *
+          1000
+        )
+
+      await user.save()
+
+    }
+
+
+    /*
+    --------------------------------
+    SEND EMAIL
+    --------------------------------
+    */
+
+    await emailService.sendOtpEmail(
+      email,
+      otp
+    )
+
+
+    return res.json({
+
+      success: true,
+
+      message:
+        "Verification code sent"
+
+    })
+
+  } catch (error) {
+
+    console.error(
+      "Send OTP error:",
+      error
+    )
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        "Failed to send verification code"
+
+    })
+
+  }
+
+}
+
+
+/*
+================================
+VERIFY OTP
+================================
+*/
+
+async function verifyOtp(
+  req,
+  res
+) {
+
+  try {
+
+    const email =
+      normalizeEmail(
+        req.body.email
+      )
+
+    const otp =
+      String(
+        req.body.otp || ""
+      )
+        .trim()
+
+
+    if (!email || !otp) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Email and OTP are required"
+
+      })
+
+    }
+
+
+    const user =
+      await User.findOne({
+        email
       })
 
 
@@ -1440,60 +1034,49 @@ async function linkShopifyStore(
         success: false,
 
         error:
-          "AI Commerce user not found"
+          "Account not found"
 
       })
 
     }
 
 
-    /*
-    --------------------------------
-    CHECK SHOPIFY STORE
-    --------------------------------
-    */
+    const otpHash =
+      crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex")
 
-    let store =
-      await Store.findOne({
-
-        $or: [
-
-          {
-            "shopify.shop_id":
-              String(shop_id)
-          },
-
-          {
-            "shopify.shop_domain":
-              normalizedDomain
-          }
-
-        ],
-
-        platform:
-          "shopify"
-
-      })
-
-
-    /*
-    --------------------------------
-    STORE BELONGS TO ANOTHER USER
-    --------------------------------
-    */
 
     if (
-      store &&
-      String(store.merchant_id) !==
-      String(user._id)
+      !user.otp_hash ||
+      user.otp_hash !== otpHash
     ) {
 
-      return res.status(409).json({
+      return res.status(400).json({
 
         success: false,
 
         error:
-          "This Shopify store is already connected to another AI Commerce account"
+          "Invalid verification code"
+
+      })
+
+    }
+
+
+    if (
+      !user.otp_expires_at ||
+      user.otp_expires_at <
+        new Date()
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Verification code has expired"
 
       })
 
@@ -1502,91 +1085,24 @@ async function linkShopifyStore(
 
     /*
     --------------------------------
-    EXISTING STORE FOR THIS USER
+    VERIFY USER
     --------------------------------
     */
 
-    if (store) {
+    user.email_verified =
+      true
 
-      store.shopify.shop_id =
-        String(shop_id)
+    user.email_verified_at =
+      new Date()
 
-      store.shopify.shop_domain =
-        normalizedDomain
+    user.otp_hash =
+      undefined
 
-      store.shopify.connected =
-        true
-
-      store.platform =
-        "shopify"
-
-      store.platform_connected =
-        true
-
-      store.platform_connection_status =
-        "connected"
-
-      if (shop_name) {
-
-        store.store_name =
-          shop_name
-
-      }
-
-      await store.save()
-
-    }
+    user.otp_expires_at =
+      undefined
 
 
-    /*
-    --------------------------------
-    CREATE NEW STORE
-    --------------------------------
-    */
-
-    if (!store) {
-
-      store =
-        await Store.create({
-
-          merchant_id:
-            user._id,
-
-          store_name:
-            shop_name ||
-            normalizedDomain,
-
-          industry:
-            "ecommerce",
-
-          currency:
-            "USD",
-
-          platform:
-            "shopify",
-
-          platform_connected:
-            true,
-
-          platform_connection_status:
-            "connected",
-
-          shopify: {
-
-            shop_id:
-              String(shop_id),
-
-            shop_domain:
-              normalizedDomain,
-
-            connected:
-              true
-
-          }
-
-        })
-
-    }
+    await user.save()
 
 
     /*
@@ -1595,113 +1111,27 @@ async function linkShopifyStore(
     --------------------------------
     */
 
-    const accessToken =
-      generateAccessToken(user)
+    return createSessionAndRespond(
 
+      res,
 
-    const refreshToken =
-      generateRefreshToken(user)
-
-
-    res.cookie(
-
-      "refresh_token",
-
-      refreshToken,
-
-      {
-
-        httpOnly: true,
-
-        secure: true,
-
-        sameSite: "none",
-
-        maxAge:
-          30 *
-          24 *
-          60 *
-          60 *
-          1000
-
-      }
+      user
 
     )
-
-
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
-
-    return res.json({
-
-      success: true,
-
-      authenticated: true,
-
-      user,
-
-      store_id:
-        store._id,
-
-      store: {
-
-        id:
-          store._id,
-
-        store_name:
-          store.store_name,
-
-        platform:
-          store.platform,
-
-        platform_connected:
-          store.platform_connected,
-
-        shopify: {
-
-          shop_id:
-            store.shopify?.shop_id,
-
-          shop_domain:
-            store.shopify?.shop_domain,
-
-          connected:
-            store.shopify?.connected
-
-        }
-
-      },
-
-      token:
-        accessToken
-
-    })
 
   } catch (error) {
 
     console.error(
-
-      "Shopify store linking error:",
-
+      "Verify OTP error:",
       error
-
     )
-
 
     return res.status(500).json({
 
       success: false,
 
       error:
-        "Failed to link Shopify store",
-
-      details:
-        process.env.NODE_ENV === "production"
-          ? undefined
-          : error.message
+        "Verification failed"
 
     })
 
@@ -1716,7 +1146,6 @@ REFRESH TOKEN
 ================================
 */
 
-
 async function refreshToken(
   req,
   res
@@ -1725,8 +1154,7 @@ async function refreshToken(
   try {
 
     const token =
-      req.cookies
-        ?.refresh_token
+      req.cookies?.refresh_token
 
 
     if (!token) {
@@ -1736,18 +1164,12 @@ async function refreshToken(
         success: false,
 
         error:
-          "No refresh token"
+          "Refresh token required"
 
       })
 
     }
 
-
-    /*
-    --------------------------------
-    VERIFY REFRESH TOKEN
-    --------------------------------
-    */
 
     const decoded =
       jwt.verify(
@@ -1759,17 +1181,9 @@ async function refreshToken(
       )
 
 
-    /*
-    --------------------------------
-    FIND USER
-    --------------------------------
-    */
-
     const user =
       await User.findById(
-
         decoded.id
-
       )
 
 
@@ -1787,18 +1201,8 @@ async function refreshToken(
     }
 
 
-    /*
-    --------------------------------
-    CREATE NEW ACCESS TOKEN
-    --------------------------------
-    */
-
     const accessToken =
-      generateAccessToken(
-
-        user
-
-      )
+      generateAccessToken(user)
 
 
     return res.json({
@@ -1811,15 +1215,6 @@ async function refreshToken(
     })
 
   } catch (error) {
-
-    console.error(
-
-      "Refresh token error:",
-
-      error
-
-    )
-
 
     return res.status(401).json({
 
@@ -1837,17 +1232,9 @@ async function refreshToken(
 
 /*
 ================================
-CURRENT SESSION
-================================
-
-Used by the frontend to restore
-the authenticated user after reload.
-
-The merchant dashboard gets the
-User and the Store owned by that User.
+GET SESSION
 ================================
 */
-
 
 async function getSession(
   req,
@@ -1856,52 +1243,41 @@ async function getSession(
 
   try {
 
-    const refreshTokenCookie =
-      req.cookies
-        ?.refresh_token
+    const token =
+      req.headers.authorization
+        ?.replace(
+          "Bearer ",
+          ""
+        )
 
 
-    if (!refreshTokenCookie) {
+    if (!token) {
 
       return res.status(401).json({
 
         success: false,
 
         error:
-          "No session"
+          "Authentication required"
 
       })
 
     }
 
 
-    /*
-    --------------------------------
-    VERIFY REFRESH TOKEN
-    --------------------------------
-    */
-
     const decoded =
       jwt.verify(
 
-        refreshTokenCookie,
+        token,
 
-        process.env.JWT_REFRESH_SECRET
+        process.env.JWT_SECRET
 
       )
 
 
-    /*
-    --------------------------------
-    FIND USER
-    --------------------------------
-    */
-
     const user =
       await User.findById(
-
         decoded.id
-
       )
 
 
@@ -1919,26 +1295,6 @@ async function getSession(
     }
 
 
-    /*
-    --------------------------------
-    ACCESS TOKEN
-    --------------------------------
-    */
-
-    const accessToken =
-      generateAccessToken(
-
-        user
-
-      )
-
-
-    /*
-    --------------------------------
-    FIND USER STORE
-    --------------------------------
-    */
-
     const store =
       await Store.findOne({
 
@@ -1948,61 +1304,20 @@ async function getSession(
       })
 
 
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
-
     return res.json({
 
       success: true,
-
-      token:
-        accessToken,
 
       user,
 
       store_id:
         store
           ? store._id
-          : null,
-
-      store:
-        store
-          ? {
-
-              id:
-                store._id,
-
-              store_name:
-                store.store_name,
-
-              platform:
-                store.platform,
-
-              platform_connected:
-                store.platform_connected,
-
-              platform_connection_status:
-                store.platform_connection_status
-
-            }
-
           : null
 
     })
 
   } catch (error) {
-
-    console.error(
-
-      "Session error:",
-
-      error
-
-    )
-
 
     return res.status(401).json({
 
@@ -2023,7 +1338,6 @@ async function getSession(
 LOGOUT
 ================================
 */
-
 
 async function logout(
   req,
@@ -2065,7 +1379,6 @@ EXPORTS
 ================================
 */
 
-
 module.exports = {
 
   sendOtp,
@@ -2073,8 +1386,6 @@ module.exports = {
   verifyOtp,
 
   identifyShopifyUser,
-
-  linkShopifyStore,
 
   refreshToken,
 
