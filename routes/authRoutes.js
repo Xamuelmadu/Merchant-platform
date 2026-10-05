@@ -5,9 +5,6 @@ const router = express.Router()
 const {
   sendOtp,
   verifyOtp,
-  refreshToken,
-  getSession,
-  logout,
 
   /*
   --------------------------------
@@ -16,7 +13,16 @@ const {
   */
 
   identifyShopifyUser,
-  linkShopifyStore
+
+  /*
+  --------------------------------
+  TOKEN MANAGEMENT
+  --------------------------------
+  */
+
+  refreshToken,
+  getSession,
+  logout
 
 } = require("../controllers/authController")
 
@@ -59,7 +65,7 @@ SHOPIFY IDENTITY
 The Shopify App is already
 authenticated by Shopify.
 
-These endpoints allow the Shopify
+This endpoint allows the Shopify
 App to establish the corresponding
 AI Commerce identity.
 
@@ -98,41 +104,6 @@ The endpoint:
 router.post(
   "/shopify/identify",
   identifyShopifyUser
-)
-
-
-/*
---------------------------------
-LINK SHOPIFY STORE
---------------------------------
-
-Used when a Shopify store needs
-to be associated with an existing
-AI Commerce account.
-
-Example:
-
-Existing AI Commerce user:
-
-user@example.com
-
-installs Shopify App
-
-↓
-
-Shopify identity verified
-
-↓
-
-Store gets linked to:
-
-User._id
---------------------------------
-*/
-
-router.post(
-  "/shopify/link",
-  linkShopifyStore
 )
 
 
@@ -199,5 +170,11 @@ router.post(
   logout
 )
 
+
+/*
+================================
+EXPORT
+================================
+*/
 
 module.exports = router
