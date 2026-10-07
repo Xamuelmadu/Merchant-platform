@@ -8,277 +8,844 @@ const cookieParser = require("cookie-parser")
 
 const connectDB = require("./config/database")
 
-// ✅ Create app FIRST
+/*
+================================
+CREATE APP
+================================
+*/
+
 const app = express()
 
-// ✅ THEN use middleware
+
+/*
+================================
+COOKIE / PASSPORT
+================================
+*/
+
 app.use(cookieParser())
+
 app.use(passport.initialize())
+
 require("./config/passport")
 
-// Routes
-const authRoutes = require("./routes/authRoutes")
-const storeRoutes = require("./routes/storeRoutes")
-const productRoutes = require("./routes/productRoutes")
-const orderRoutes = require("./routes/orderRoutes")
-const paymentRoutes = require("./routes/paymentRoutes")
-const engineRoutes = require("./routes/engineRoutes")
-const analyticsRoutes = require("./routes/analyticsRoutes")
-const billingRoutes = require("./routes/billingRoutes")
-const webhookRoutes = require("./routes/webhookRoutes")
-const integrationRoutes = require("./routes/integrationRoutes")
-const conversationRoutes = require("./routes/conversationRoutes")
-
-// Services
-const { runMonthlyBilling } = require("./services/billingEngine")
-const { checkSubscriptions } = require("./cron/subscriptionCron")
 
 /*
---------------------------------
-ENV VALIDATION
---------------------------------
+================================
+ROUTES
+================================
 */
 
-const requiredEnv = [
-  "MONGO_URI",
-  "JWT_SECRET",
-  "PAYSTACK_SECRET",
-  "STRIPE_SECRET"
-]
+const authRoutes =
+  require("./routes/authRoutes")
 
-requiredEnv.forEach((key) => {
-  if (!process.env[key]) {
-    console.error(`❌ Missing environment variable: ${key}`)
-    process.exit(1)
+const storeRoutes =
+  require("./routes/storeRoutes")
+
+const productRoutes =
+  require("./routes/productRoutes")
+
+const orderRoutes =
+  require("./routes/orderRoutes")
+
+const paymentRoutes =
+  require("./routes/paymentRoutes")
+
+const engineRoutes =
+  require("./routes/engineRoutes")
+
+const analyticsRoutes =
+  require("./routes/analyticsRoutes")
+
+const billingRoutes =
+  require("./routes/billingRoutes")
+
+const webhookRoutes =
+  require("./routes/webhookRoutes")
+
+const integrationRoutes =
+  require("./routes/integrationRoutes")
+
+const conversationRoutes =
+  require("./routes/conversationRoutes")
+
+
+/*
+================================
+SERVICES
+================================
+*/
+
+const {
+  runMonthlyBilling
+} =
+  require("./services/billingEngine")
+
+const {
+  checkSubscriptions
+} =
+  require("./cron/subscriptionCron")
+
+
+/*
+================================
+CORS CONFIGURATION
+================================
+
+Guava frontend:
+
+https://www.guavabyinvite.com
+
+The API uses HTTP-only refresh cookies,
+therefore credentials must be enabled.
+
+================================
+*/
+
+const allowedOrigins = [
+
+  "https://www.guavabyinvite.com",
+
+  "https://guavabyinvite.com",
+
+  process.env.FRONTEND_URL,
+
+  "http://localhost:3000"
+
+].filter(Boolean)
+
+
+app.use(
+
+  cors({
+
+    origin: function (
+      origin,
+      callback
+    ) {
+
+      /*
+      --------------------------------
+      SERVER-TO-SERVER REQUESTS
+      --------------------------------
+
+      Requests without an Origin header
+      are allowed.
+
+      This is required for trusted backend
+      integrations such as Shopify,
+      WooCommerce and internal services.
+      --------------------------------
+      */
+
+      if (!origin) {
+
+        return callback(
+          null,
+          true
+        )
+
+      }
+
+
+      /*
+      --------------------------------
+      ALLOWED FRONTENDS
+      --------------------------------
+      */
+
+      if (
+        allowedOrigins.includes(
+          origin
+        )
+      ) {
+
+        return callback(
+          null,
+          true
+        )
+
+      }
+
+
+      /*
+      --------------------------------
+      BLOCK UNKNOWN ORIGINS
+      --------------------------------
+      */
+
+      console.error(
+        "CORS blocked origin:",
+        origin
+      )
+
+      return callback(
+        new Error(
+          "Not allowed by CORS"
+        )
+      )
+
+    },
+
+
+    /*
+    --------------------------------
+    CREDENTIALS
+    --------------------------------
+    */
+
+    credentials: true,
+
+
+    /*
+    --------------------------------
+    METHODS
+    --------------------------------
+    */
+
+    methods: [
+
+      "GET",
+
+      "POST",
+
+      "PUT",
+
+      "PATCH",
+
+      "DELETE",
+
+      "OPTIONS"
+
+    ],
+
+
+    /*
+    --------------------------------
+    HEADERS
+    --------------------------------
+    */
+
+    allowedHeaders: [
+
+      "Content-Type",
+
+      "Authorization",
+
+      "X-Store-Id",
+
+      "x-store-id",
+
+      "X-Platform-Key",
+
+      "x-platform-key",
+
+      "X-Shopify-Integration-Secret",
+
+      "x-shopify-integration-secret"
+
+    ]
+
+  })
+
+)
+
+
+/*
+================================
+STRIPE WEBHOOK RAW BODY
+================================
+
+Stripe signatures must be calculated
+against the original request body.
+
+================================
+*/
+
+app.use(
+
+  "/webhooks/stripe",
+
+  express.raw({
+
+    type:
+      "application/json"
+
+  })
+
+)
+
+
+/*
+================================
+SHOPIFY WEBHOOK RAW BODY
+================================
+
+Shopify webhook signatures must be
+calculated against the original body.
+
+================================
+*/
+
+app.use(
+
+  "/webhooks/shopify",
+
+  express.raw({
+
+    type:
+      "application/json"
+
+  })
+
+)
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK RAW BODY
+================================
+
+WooCommerce webhook signatures must be
+calculated against the original body.
+
+================================
+*/
+
+app.use(
+
+  "/webhooks/woocommerce",
+
+  express.raw({
+
+    type:
+      "application/json"
+
+  })
+
+)
+
+
+/*
+================================
+BODY PARSER
+================================
+*/
+
+app.use(
+
+  express.json({
+
+    limit:
+      "10mb"
+
+  })
+
+)
+
+
+/*
+================================
+URL ENCODED BODY
+================================
+*/
+
+app.use(
+
+  express.urlencoded({
+
+    extended: true,
+
+    limit:
+      "10mb"
+
+  })
+
+)
+
+
+/*
+================================
+HEALTH CHECK
+================================
+*/
+
+app.get(
+
+  "/",
+
+  (req, res) => {
+
+    return res.json({
+
+      success: true,
+
+      message:
+        "Guava AI Commerce Platform API",
+
+      status:
+        "online"
+
+    })
+
   }
-})
+
+)
+
 
 /*
---------------------------------
-GLOBAL ERROR HANDLING
---------------------------------
+================================
+API HEALTH CHECK
+================================
 */
 
-process.on("unhandledRejection", (err) => {
-  console.error("❌ Unhandled Rejection:", err)
-})
+app.get(
 
-process.on("uncaughtException", (err) => {
-  console.error("❌ Uncaught Exception:", err)
-})
+  "/api/health",
+
+  (req, res) => {
+
+    return res.json({
+
+      success: true,
+
+      service:
+        "Guava AI Commerce Platform",
+
+      status:
+        "healthy",
+
+      timestamp:
+        new Date().toISOString()
+
+    })
+
+  }
+
+)
+
 
 /*
---------------------------------
-BOOTSTRAP SERVER
---------------------------------
+================================
+AUTH ROUTES
+================================
 */
+
+app.use(
+
+  "/api/auth",
+
+  authRoutes
+
+)
+
+
+/*
+================================
+STORE ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/store",
+
+  storeRoutes
+
+)
+
+
+/*
+================================
+PRODUCT ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/products",
+
+  productRoutes
+
+)
+
+
+/*
+================================
+ORDER ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/orders",
+
+  orderRoutes
+
+)
+
+
+/*
+================================
+PAYMENT ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/payments",
+
+  paymentRoutes
+
+)
+
+
+/*
+================================
+ENGINE ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/engine",
+
+  engineRoutes
+
+)
+
+
+/*
+================================
+ANALYTICS ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/analytics",
+
+  analyticsRoutes
+
+)
+
+
+/*
+================================
+BILLING ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/billing",
+
+  billingRoutes
+
+)
+
+
+/*
+================================
+WEBHOOK ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/webhooks",
+
+  webhookRoutes
+
+)
+
+
+/*
+================================
+INTEGRATION ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/integrations",
+
+  integrationRoutes
+
+)
+
+
+/*
+================================
+CONVERSATION ROUTES
+================================
+*/
+
+app.use(
+
+  "/api/conversation",
+
+  conversationRoutes
+
+)
+
+
+/*
+================================
+404 HANDLER
+================================
+*/
+
+app.use(
+
+  (req, res) => {
+
+    return res.status(404).json({
+
+      success: false,
+
+      error:
+        "Route not found",
+
+      path:
+        req.originalUrl
+
+    })
+
+  }
+
+)
+
+
+/*
+================================
+GLOBAL ERROR HANDLER
+================================
+*/
+
+app.use(
+
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+
+    console.error(
+      "Global server error:",
+      error
+    )
+
+
+    /*
+    --------------------------------
+    CORS ERROR
+    --------------------------------
+    */
+
+    if (
+      error.message ===
+      "Not allowed by CORS"
+    ) {
+
+      return res.status(403).json({
+
+        success: false,
+
+        error:
+          "Origin not allowed"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    STANDARD ERROR
+    --------------------------------
+    */
+
+    return res.status(
+      error.status || 500
+    ).json({
+
+      success: false,
+
+      error:
+        process.env.NODE_ENV ===
+        "production"
+
+          ? "Internal server error"
+
+          : error.message
+
+    })
+
+  }
+
+)
+
+
+/*
+================================
+DATABASE + SERVER
+================================
+*/
+
+const PORT =
+  process.env.PORT ||
+  5000
+
 
 async function startServer() {
 
   try {
+
+    /*
+    --------------------------------
+    CONNECT DATABASE
+    --------------------------------
+    */
+
     await connectDB()
-    console.log("✅ Database connected")
-  } catch (err) {
-    console.error("❌ Database connection failed:", err.message)
+
+
+    console.log(
+      "✅ Database connected"
+    )
+
+
+    /*
+    --------------------------------
+    START SERVER
+    --------------------------------
+    */
+
+    app.listen(
+
+      PORT,
+
+      () => {
+
+        console.log(
+          `🚀 Guava AI Commerce API running on port ${PORT}`
+        )
+
+        console.log(
+          "🌐 Allowed frontend origins:",
+          allowedOrigins
+        )
+
+      }
+
+    )
+
+
+  } catch (error) {
+
+    console.error(
+      "❌ Failed to start server:",
+      error
+    )
+
     process.exit(1)
+
   }
-
-  /*
-  --------------------------------
-  CORS CONFIG
-  --------------------------------
-  */
-
-  app.use(cors({
-    origin: process.env.NODE_ENV === "production"
-      ? process.env.FRONTEND_URL
-      : "http://localhost:3000",
-    credentials: true
-  }))
-
-  /*
-  --------------------------------
-  STRIPE WEBHOOK RAW BODY (CRITICAL)
-  --------------------------------
-  */
-
-  /*
---------------------------------
-STRIPE WEBHOOK RAW BODY
---------------------------------
-*/
-
-app.use(
-  "/webhooks/stripe",
-  express.raw({
-    type: "application/json"
-  })
-)
-
-/*
---------------------------------
-SHOPIFY WEBHOOK RAW BODY
---------------------------------
-
-Shopify HMAC verification requires
-the original request body.
-
-This MUST run before express.json().
---------------------------------
-*/
-
-app.use(
-  "/webhooks/shopify",
-  express.raw({
-    type: "application/json"
-  })
-)
-
-/*
---------------------------------
-WOOCOMMERCE WEBHOOK RAW BODY
---------------------------------
-WooCommerce webhook signatures
-must be calculated against the
-original request body.
---------------------------------
-*/
-
-app.use(
-  "/webhooks/woocommerce",
-  express.raw({
-    type: "application/json"
-  })
-)
-
-  /*
-  --------------------------------
-  BODY PARSER
-  --------------------------------
-  */
-
-  app.use(express.json({ limit: "10mb" }))
-
-  /*
-  --------------------------------
-  ROUTES
-  --------------------------------
-  */
-
-  app.use("/api/auth", authRoutes)
-  app.use("/api/store", storeRoutes)
-  app.use("/api/products", productRoutes)
-  app.use("/api/orders", orderRoutes)
-  app.use("/api/payments", paymentRoutes)
-  app.use("/api/engine", engineRoutes)
-  app.use("/api/analytics", analyticsRoutes)
-  app.use("/api/billing", billingRoutes)
-  app.use("/webhooks", webhookRoutes)
-  app.use("/api/integrations", integrationRoutes)
-  app.use("/api/conversation", conversationRoutes)
-
-  /*
-  --------------------------------
-  HEALTH CHECK
-  --------------------------------
-  */
-
-  app.get("/", (req, res) => {
-    res.json({
-      status: "ok",
-      message: "Merchant platform API running",
-      environment: process.env.NODE_ENV || "development"
-    })
-  })
-
-  app.get("/health", (req, res) => {
-    res.status(200).json({ status: "healthy" })
-  })
-  
-  app.get("/api/health", (req, res) => {
-    res.status(200).json({ status: "healthy" })
-  })
-
-  /*
-  --------------------------------
-  CRON JOBS (MONTHLY)
-  --------------------------------
-  */
-
-  if (process.env.ENABLE_CRON === "true") {
-
-    console.log("✅ Cron jobs enabled")
-
-    cron.schedule("0 0 1 * *", async () => {
-      console.log("⏳ Running platform fee billing...")
-      try {
-        await runMonthlyBilling()
-        console.log("✅ Platform fees charged")
-      } catch (error) {
-        console.error("❌ Billing failed:", error.message)
-      }
-    })
-
-    cron.schedule("0 * * * *", async () => {
-      console.log("⏳ Checking subscription expiry...")
-      try {
-        await checkSubscriptions()
-        console.log("✅ Subscription check complete")
-      } catch (error) {
-        console.error("❌ Subscription check failed:", error.message)
-      }
-    })
-
-    cron.schedule("0 2 * * *", async () => {
-      console.log("⏳ Running billing reconciliation...")
-      try {
-        await runMonthlyBilling()
-        console.log("✅ Reconciliation complete")
-      } catch (error) {
-        console.error("❌ Reconciliation failed:", error.message)
-      }
-    })
-  }
-
-  /*
-  --------------------------------
-  ERROR HANDLER
-  --------------------------------
-  */
-
-  app.use((err, req, res, next) => {
-    console.error("❌ Error:", err.stack)
-    res.status(err.status || 500).json({
-      error: "Server error",
-      message:
-        process.env.NODE_ENV === "production"
-          ? "Internal server error"
-          : err.message
-    })
-  })
-
-  app.use((req, res) => {
-    res.status(404).json({ error: "Route not found" })
-  })
-
-  const PORT = process.env.PORT || 5000
-
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on port ${PORT}`)
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
-  })
-
-  const shutdown = () => {
-    console.log("⚠️ Shutdown signal received")
-    server.close(() => {
-      console.log("✅ Server closed")
-      process.exit(0)
-    })
-  }
-
-  process.on("SIGTERM", shutdown)
-  process.on("SIGINT", shutdown)
 
 }
+
+
+/*
+================================
+MONTHLY BILLING
+================================
+
+Runs at midnight on the first day
+of every month.
+
+================================
+*/
+
+cron.schedule(
+
+  "0 0 1 * *",
+
+  async () => {
+
+    try {
+
+      console.log(
+        "💳 Running monthly billing..."
+      )
+
+      await runMonthlyBilling()
+
+      console.log(
+        "✅ Monthly billing completed"
+      )
+
+    } catch (error) {
+
+      console.error(
+        "❌ Monthly billing failed:",
+        error
+      )
+
+    }
+
+  }
+
+)
+
+
+/*
+================================
+SUBSCRIPTION CHECK
+================================
+
+Runs every hour.
+
+================================
+*/
+
+cron.schedule(
+
+  "0 * * * *",
+
+  async () => {
+
+    try {
+
+      console.log(
+        "🔄 Checking subscriptions..."
+      )
+
+      await checkSubscriptions()
+
+      console.log(
+        "✅ Subscription check completed"
+      )
+
+    } catch (error) {
+
+      console.error(
+        "❌ Subscription check failed:",
+        error
+      )
+
+    }
+
+  }
+
+)
+
+
+/*
+================================
+START
+================================
+*/
 
 startServer()
