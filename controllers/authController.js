@@ -946,10 +946,11 @@ async function sendOtp(
     --------------------------------
     */
 
-    await emailService.sendOtpEmail(
-      email,
-      otp
-    )
+    await emailService.sendOtpEmail({
+  email,
+  otp,
+  purpose: req.body.purpose
+})
 
 
     return res.json({
