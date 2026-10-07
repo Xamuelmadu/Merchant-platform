@@ -1,9 +1,14 @@
 const jwt = require("jsonwebtoken")
+
 const crypto = require("crypto")
+
 const bcrypt = require("bcryptjs")
 
 const User = require("../models/user")
+
 const Store = require("../models/store")
+
+const Otp = require("../models/otp")
 
 const emailService =
   require("../services/emailService")
@@ -79,9 +84,7 @@ the Shopify App to our backend.
 ================================
 */
 
-function authenticatePlatformRequest(
-  req
-) {
+function authenticatePlatformRequest(req) {
 
   const platformKey =
     req.headers["x-platform-key"]
@@ -254,7 +257,7 @@ The backend then:
    AI Commerce merchant
 5. Returns an identity requiring
    email verification for a new
-   merchant
+   merchant.
 ================================
 */
 
@@ -335,15 +338,6 @@ async function identifyShopifyUser(
 
     Shopify is authoritative for
     the store's currency.
-
-    Examples:
-
-    USD
-    NGN
-    GBP
-    EUR
-    CAD
-    AUD
     --------------------------------
     */
 
@@ -766,9 +760,6 @@ async function identifyShopifyUser(
     The merchant must verify ownership
     of the Shopify email through the
     AI Commerce email OTP flow.
-
-    This keeps AI Commerce as the
-    owner of its authentication system.
     =================================
     */
 
@@ -838,6 +829,17 @@ async function identifyShopifyUser(
 ================================
 SEND OTP
 ================================
+
+OTP is stored in the dedicated
+Otp collection.
+
+This is important because a new
+merchant does not have a User record
+yet.
+
+Therefore registration OTPs cannot
+depend on User.otp_hash.
+================================
 */
 
 async function sendOtp(
@@ -847,11 +849,23 @@ async function sendOtp(
 
   try {
 
+    /*
+    --------------------------------
+    NORMALIZE EMAIL
+    --------------------------------
+    */
+
     const email =
       normalizeEmail(
         req.body.email
       )
 
+
+    /*
+    --------------------------------
+    VALIDATE EMAIL
+    --------------------------------
+    */
 
     if (!email) {
 
@@ -889,8 +903,110 @@ async function sendOtp(
 
     const user =
       await User.findOne({
+
         email
+
       })
+
+
+    /*
+    --------------------------------
+    DETERMINE OTP PURPOSE
+    --------------------------------
+
+    signup
+      New account
+
+    signin
+      Existing account
+
+    If the frontend doesn't explicitly
+    provide a purpose, determine it
+    from whether the account exists.
+    --------------------------------
+    */
+
+    const requestedPurpose =
+      String(
+        req.body.purpose || ""
+      )
+        .trim()
+        .toLowerCase()
+
+
+    let purpose
+
+
+    if (
+      requestedPurpose ===
+      "signup"
+    ) {
+
+      purpose =
+        "signup"
+
+    } else if (
+      requestedPurpose ===
+      "signin"
+    ) {
+
+      purpose =
+        "signin"
+
+    } else {
+
+      purpose =
+        user
+          ? "signin"
+          : "signup"
+
+    }
+
+
+    /*
+    --------------------------------
+    EXISTING ACCOUNT + SIGNUP
+    --------------------------------
+    */
+
+    if (
+      purpose === "signup" &&
+      user
+    ) {
+
+      return res.status(409).json({
+
+        success: false,
+
+        error:
+          "An account with this email already exists. Please sign in."
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    NEW ACCOUNT + SIGNIN
+    --------------------------------
+    */
+
+    if (
+      purpose === "signin" &&
+      !user
+    ) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        error:
+          "No account exists with this email. Please create an account."
+
+      })
+
+    }
 
 
     /*
@@ -909,35 +1025,64 @@ async function sendOtp(
       )
 
 
-    const otpHash =
-      crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex")
+    /*
+    --------------------------------
+    OTP EXPIRATION
+    --------------------------------
+    */
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+        10 *
+        60 *
+        1000
+      )
 
 
     /*
     --------------------------------
-    OTP STORAGE
+    REMOVE PREVIOUS OTP
+    --------------------------------
+
+    Only one active OTP should exist
+    for an email + purpose.
     --------------------------------
     */
 
-    if (user) {
+    await Otp.deleteMany({
 
-      user.otp_hash =
-        otpHash
+      email,
 
-      user.otp_expires_at =
-        new Date(
-          Date.now() +
-          10 *
-          60 *
-          1000
-        )
+      purpose
 
-      await user.save()
+    })
 
-    }
+
+    /*
+    --------------------------------
+    STORE OTP
+    --------------------------------
+    */
+
+    await Otp.create({
+
+      email,
+
+      otp,
+
+      purpose,
+
+      expires_at:
+        expiresAt,
+
+      attempts:
+        0,
+
+      verified:
+        false
+
+    })
 
 
     /*
@@ -947,11 +1092,21 @@ async function sendOtp(
     */
 
     await emailService.sendOtpEmail({
-  email,
-  otp,
-  purpose: req.body.purpose
-})
 
+      email,
+
+      otp,
+
+      purpose
+
+    })
+
+
+    /*
+    --------------------------------
+    RESPONSE
+    --------------------------------
+    */
 
     return res.json({
 
@@ -968,6 +1123,7 @@ async function sendOtp(
       "Send OTP error:",
       error
     )
+
 
     return res.status(500).json({
 
@@ -987,6 +1143,32 @@ async function sendOtp(
 ================================
 VERIFY OTP
 ================================
+
+Handles both:
+
+1. New merchant registration
+2. Existing merchant sign in
+
+SIGNUP:
+
+email + otp + name
+        ↓
+verify OTP
+        ↓
+create User
+        ↓
+create session
+
+SIGNIN:
+
+email + otp
+        ↓
+verify OTP
+        ↓
+find User
+        ↓
+create session
+================================
 */
 
 async function verifyOtp(
@@ -996,10 +1178,17 @@ async function verifyOtp(
 
   try {
 
+    /*
+    --------------------------------
+    NORMALIZE INPUT
+    --------------------------------
+    */
+
     const email =
       normalizeEmail(
         req.body.email
       )
+
 
     const otp =
       String(
@@ -1008,51 +1197,153 @@ async function verifyOtp(
         .trim()
 
 
-    if (!email || !otp) {
+    const requestedPurpose =
+      String(
+        req.body.purpose || ""
+      )
+        .trim()
+        .toLowerCase()
+
+
+    /*
+    --------------------------------
+    VALIDATE EMAIL
+    --------------------------------
+    */
+
+    if (!email) {
 
       return res.status(400).json({
 
         success: false,
 
         error:
-          "Email and OTP are required"
+          "Email is required"
 
       })
 
     }
 
 
-    const user =
-      await User.findOne({
-        email
-      })
+    if (!isValidEmail(email)) {
 
-
-    if (!user) {
-
-      return res.status(404).json({
+      return res.status(400).json({
 
         success: false,
 
         error:
-          "Account not found"
+          "Invalid email"
 
       })
 
     }
 
 
-    const otpHash =
-      crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex")
+    /*
+    --------------------------------
+    VALIDATE OTP
+    --------------------------------
+    */
+
+    if (!otp) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Verification code is required"
+
+      })
+
+    }
+
+
+    if (!/^\d{6}$/.test(otp)) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          "Verification code must be 6 digits"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    DETERMINE PURPOSE
+    --------------------------------
+    */
+
+    let purpose
 
 
     if (
-      !user.otp_hash ||
-      user.otp_hash !== otpHash
+      requestedPurpose ===
+      "signup"
     ) {
+
+      purpose =
+        "signup"
+
+    } else if (
+      requestedPurpose ===
+      "signin"
+    ) {
+
+      purpose =
+        "signin"
+
+    } else {
+
+      const existingUser =
+        await User.findOne({
+
+          email
+
+        })
+
+
+      purpose =
+        existingUser
+          ? "signin"
+          : "signup"
+
+    }
+
+
+    /*
+    --------------------------------
+    FIND OTP
+    --------------------------------
+    */
+
+    const otpRecord =
+      await Otp.findOne({
+
+        email,
+
+        otp,
+
+        purpose,
+
+        verified:
+          false
+
+      })
+
+
+    /*
+    --------------------------------
+    INVALID OTP
+    --------------------------------
+    */
+
+    if (!otpRecord) {
 
       return res.status(400).json({
 
@@ -1066,11 +1357,25 @@ async function verifyOtp(
     }
 
 
+    /*
+    --------------------------------
+    CHECK EXPIRATION
+    --------------------------------
+    */
+
     if (
-      !user.otp_expires_at ||
-      user.otp_expires_at <
+      !otpRecord.expires_at ||
+      otpRecord.expires_at <=
         new Date()
     ) {
+
+      await Otp.deleteOne({
+
+        _id:
+          otpRecord._id
+
+      })
+
 
       return res.status(400).json({
 
@@ -1086,24 +1391,207 @@ async function verifyOtp(
 
     /*
     --------------------------------
-    VERIFY USER
+    MARK OTP VERIFIED
     --------------------------------
     */
 
-    user.email_verified =
+    otpRecord.verified =
       true
 
-    user.email_verified_at =
-      new Date()
-
-    user.otp_hash =
-      undefined
-
-    user.otp_expires_at =
-      undefined
+    await otpRecord.save()
 
 
-    await user.save()
+    /*
+    --------------------------------
+    FIND EXISTING USER
+    --------------------------------
+    */
+
+    let user =
+      await User.findOne({
+
+        email
+
+      })
+
+
+    /*
+    =================================
+    SIGNUP
+    =================================
+    */
+
+    if (
+      purpose === "signup"
+    ) {
+
+      /*
+      --------------------------------
+      ACCOUNT ALREADY EXISTS
+      --------------------------------
+      */
+
+      if (user) {
+
+        await Otp.deleteMany({
+
+          email
+
+        })
+
+
+        return res.status(409).json({
+
+          success: false,
+
+          error:
+            "An account with this email already exists. Please sign in."
+
+        })
+
+      }
+
+
+      /*
+      --------------------------------
+      GET NAME
+      --------------------------------
+
+      Registration sends the merchant
+      name together with the OTP.
+      --------------------------------
+      */
+
+      const name =
+        String(
+          req.body.name || ""
+        )
+          .trim()
+
+
+      if (!name) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          error:
+            "Name is required to create your account"
+
+        })
+
+      }
+
+
+      /*
+      --------------------------------
+      CREATE USER
+      --------------------------------
+      */
+
+      user =
+        await User.create({
+
+          name,
+
+          email,
+
+          password:
+            null,
+
+          email_verified:
+            true,
+
+          email_verified_at:
+            new Date(),
+
+          identity_provider:
+            "email",
+
+          plan:
+            "free"
+
+        })
+
+    }
+
+
+    /*
+    =================================
+    SIGN IN
+    =================================
+    */
+
+    if (
+      purpose === "signin"
+    ) {
+
+      /*
+      --------------------------------
+      USER MUST EXIST
+      --------------------------------
+      */
+
+      if (!user) {
+
+        await Otp.deleteMany({
+
+          email
+
+        })
+
+
+        return res.status(404).json({
+
+          success: false,
+
+          error:
+            "Account not found. Please create an account."
+
+        })
+
+      }
+
+
+      /*
+      --------------------------------
+      VERIFY EMAIL
+      --------------------------------
+      */
+
+      if (
+        !user.email_verified
+      ) {
+
+        user.email_verified =
+          true
+
+        user.email_verified_at =
+          new Date()
+
+        await user.save()
+
+      }
+
+    }
+
+
+    /*
+    --------------------------------
+    INVALIDATE REMAINING OTPs
+    --------------------------------
+
+    Once authentication succeeds,
+    all OTPs for this email become
+    invalid.
+    --------------------------------
+    */
+
+    await Otp.deleteMany({
+
+      email
+
+    })
 
 
     /*
@@ -1126,6 +1614,7 @@ async function verifyOtp(
       "Verify OTP error:",
       error
     )
+
 
     return res.status(500).json({
 
