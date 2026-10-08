@@ -2,6 +2,9 @@ const express = require("express")
 
 const router = express.Router()
 
+const auth =
+  require("../middleware/auth")
+
 const {
   sendOtp,
   verifyOtp,
@@ -13,6 +16,8 @@ const {
   */
 
   identifyShopifyUser,
+
+  createShopifyConnectionIntent,
 
   /*
   --------------------------------
@@ -31,18 +36,6 @@ const {
 ================================
 EMAIL OTP AUTH
 ================================
-
-PRIMARY AI COMMERCE AUTHENTICATION
-
-SIGN UP / SIGN IN
-
-1. User enters email
-2. /send-otp sends verification code
-3. User enters OTP
-4. /verify-otp creates or authenticates
-   the user's account
-5. Session is created
-================================
 */
 
 router.post(
@@ -59,46 +52,45 @@ router.post(
 
 /*
 ================================
-SHOPIFY IDENTITY
+SHOPIFY CONNECTION INTENT
 ================================
 
-The Shopify App is already
-authenticated by Shopify.
+Called by the authenticated
+Guava dashboard before sending
+the merchant to Shopify.
 
-This endpoint allows the Shopify
-App to establish the corresponding
-AI Commerce identity.
+The endpoint creates a short-lived
+signed intent identifying the
+current Guava User.
 
-Shopify authentication proves:
-
-"This request came from the
-authenticated Shopify App."
-
-AI Commerce authentication proves:
-
-"This Shopify merchant belongs to
-this AI Commerce User."
+The browser never supplies
+merchant_id.
 ================================
 */
 
+router.post(
+  "/shopify/connection-intent",
+  auth,
+  createShopifyConnectionIntent
+)
+
 
 /*
---------------------------------
-IDENTIFY SHOPIFY MERCHANT
---------------------------------
+================================
+SHOPIFY IDENTITY
+================================
 
-Used by the Shopify App after
-Shopify authentication.
+Called by the authenticated
+Shopify App.
 
-The endpoint:
+The platform key proves that the
+request came from our Shopify App.
 
-1. Finds the Shopify store
-2. Finds its merchant
-3. Creates the AI Commerce
-   identity if necessary
-4. Returns the merchant/store
-   relationship
---------------------------------
+A connection intent, when present,
+proves that the connection was
+initiated by an already-authenticated
+Guava merchant.
+================================
 */
 
 router.post(
@@ -113,57 +105,17 @@ TOKEN MANAGEMENT
 ================================
 */
 
-
-/*
---------------------------------
-REFRESH ACCESS TOKEN
---------------------------------
-
-The refresh token is stored in
-an httpOnly cookie.
-
-Returns a new short-lived
-access token.
-*/
-
 router.get(
   "/refresh",
   refreshToken
 )
 
 
-/*
---------------------------------
-CURRENT SESSION
---------------------------------
-
-Used by the webapp and Shopify
-App to restore the authenticated
-AI Commerce merchant after:
-
-- Page refresh
-- Browser reopen
-- Dashboard navigation
-- Access token expiration
-
-The refresh_token cookie identifies
-the AI Commerce User.
-*/
-
 router.get(
   "/session",
   getSession
 )
 
-
-/*
---------------------------------
-LOGOUT
---------------------------------
-
-Clears the AI Commerce refresh
-session.
-*/
 
 router.post(
   "/logout",

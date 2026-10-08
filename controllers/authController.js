@@ -1,13 +1,9 @@
 const jwt = require("jsonwebtoken")
-
 const crypto = require("crypto")
-
 const bcrypt = require("bcryptjs")
 
 const User = require("../models/user")
-
 const Store = require("../models/store")
-
 const Otp = require("../models/otp")
 
 const emailService =
@@ -121,7 +117,6 @@ async function createSessionAndRespond(
   const accessToken =
     generateAccessToken(user)
 
-
   const refreshToken =
     generateRefreshToken(user)
 
@@ -155,11 +150,14 @@ async function createSessionAndRespond(
 
     {
 
-      httpOnly: true,
+      httpOnly:
+        true,
 
-      secure: true,
+      secure:
+        true,
 
-      sameSite: "none",
+      sameSite:
+        "none",
 
       maxAge:
         30 *
@@ -181,7 +179,8 @@ async function createSessionAndRespond(
 
   return res.json({
 
-    success: true,
+    success:
+      true,
 
     token:
       accessToken,
@@ -215,12 +214,6 @@ function normalizeEmail(email) {
 }
 
 
-/*
-================================
-VALIDATE EMAIL
-================================
-*/
-
 function isValidEmail(email) {
 
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -232,32 +225,341 @@ function isValidEmail(email) {
 
 /*
 ================================
-IDENTIFY SHOPIFY MERCHANT
+SHOPIFY CONNECTION INTENT
+================================
+
+This is the bridge between:
+
+Guava Web Dashboard
+        ↓
+Shopify App
+        ↓
+Guava Identity
+
+A web-authenticated Guava user
+can create a short-lived signed
+connection intent.
+
+The Shopify App receives this
+intent after Shopify authentication
+and sends it back to the platform.
+
+The intent tells Guava:
+
+"This Shopify connection was
+started by this authenticated
+Guava user."
+
+IMPORTANT:
+
+The browser never supplies
+merchant_id directly.
+
+The merchant identity is encoded
+inside a server-signed token.
+================================
+*/
+
+
+function generateShopifyConnectionIntent(
+  user
+) {
+
+  const jti =
+    crypto.randomUUID()
+
+
+  return jwt.sign(
+
+    {
+      type:
+        "shopify_connection",
+
+      jti,
+
+      user_id:
+        String(user._id),
+
+      email:
+        user.email
+
+    },
+
+    process.env.JWT_SECRET,
+
+    {
+      expiresIn:
+        "10m"
+    }
+
+  )
+
+}
+
+
+/*
+--------------------------------
+VERIFY SHOPIFY CONNECTION INTENT
+--------------------------------
+*/
+
+function verifyShopifyConnectionIntent(
+  token
+) {
+
+  if (!token) {
+
+    return null
+
+  }
+
+  try {
+
+    const decoded =
+      jwt.verify(
+
+        token,
+
+        process.env.JWT_SECRET
+
+      )
+
+
+    if (
+      decoded?.type !==
+      "shopify_connection"
+    ) {
+
+      return null
+
+    }
+
+
+    if (!decoded?.user_id) {
+
+      return null
+
+    }
+
+
+    return decoded
+
+  } catch (error) {
+
+    return null
+
+  }
+
+}
+
+
+/*
+================================
+CREATE SHOPIFY CONNECTION INTENT
+================================
+
+POST /api/auth/shopify/connection-intent
+
+Requires the normal Guava JWT.
+
+This endpoint is called by the
+Guava dashboard before sending
+the merchant to Shopify.
+
+The returned token is short-lived
+and only identifies the Guava
+account that initiated the
+connection.
+================================
+*/
+
+async function createShopifyConnectionIntent(
+  req,
+  res
+) {
+
+  try {
+
+    /*
+    --------------------------------
+    AUTHENTICATED USER
+    --------------------------------
+    */
+
+    if (!req.user?.id) {
+
+      return res.status(401).json({
+
+        success:
+          false,
+
+        error:
+          "Authentication required"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    LOAD USER
+    --------------------------------
+    */
+
+    const user =
+      await User.findById(
+        req.user.id
+      )
+
+
+    if (!user) {
+
+      return res.status(404).json({
+
+        success:
+          false,
+
+        error:
+          "User not found"
+
+      })
+
+    }
+
+
+    /*
+    --------------------------------
+    CREATE INTENT
+    --------------------------------
+    */
+
+    const intent =
+      generateShopifyConnectionIntent(
+        user
+      )
+
+
+    /*
+    --------------------------------
+    RESPONSE
+    --------------------------------
+    */
+
+    return res.json({
+
+      success:
+        true,
+
+      intent,
+
+      expires_in:
+        600
+
+    })
+
+  } catch (error) {
+
+    console.error(
+
+      "Shopify connection intent error:",
+
+      error
+
+    )
+
+
+    return res.status(500).json({
+
+      success:
+        false,
+
+      error:
+        "Failed to create Shopify connection intent"
+
+    })
+
+  }
+
+}
+
+
+/*
+================================
+PLATFORM AUTHENTICATION
+FOR SHOPIFY CONNECTION
+================================
+
+Validates the internal Shopify
+App request.
+
+The Shopify App must authenticate
+itself using the platform key.
+================================
+*/
+
+
+function requirePlatformRequest(
+  req,
+  res
+) {
+
+  if (
+    !authenticatePlatformRequest(req)
+  ) {
+
+    res.status(401).json({
+
+      success:
+        false,
+
+      error:
+        "Unauthorized platform request"
+
+    })
+
+    return false
+
+  }
+
+  return true
+
+}
+
+
+/*
+================================
+SHOPIFY MERCHANT IDENTITY
 ================================
 
 POST /api/auth/shopify/identify
 
-Used by the Shopify App after
-Shopify authentication.
+There are THREE possible situations.
 
-The Shopify App sends:
+1. Shopify-first merchant
 
-- shop_id
-- shop_domain
-- shop_name
-- shop_email
-- currency
+The merchant installed the Shopify
+app before creating a Guava account.
 
-The backend then:
+2. Web-first merchant
 
-1. Authenticates the Shopify App
-2. Finds an existing Shopify store
-3. Finds the associated merchant
-4. Creates a store for an existing
-   AI Commerce merchant
-5. Returns an identity requiring
-   email verification for a new
-   merchant.
+The merchant already has a Guava
+account and later connects Shopify.
+
+3. Web-first explicit connection
+
+The merchant is authenticated in
+Guava and intentionally clicked
+"Connect Shopify".
+
+In case 3, the signed connection
+intent determines exactly which
+Guava User owns the Shopify store.
+
+IMPORTANT:
+
+The browser never supplies
+merchant_id.
 ================================
 */
 
@@ -275,17 +577,13 @@ async function identifyShopifyUser(
     */
 
     if (
-      !authenticatePlatformRequest(req)
+      !requirePlatformRequest(
+        req,
+        res
+      )
     ) {
 
-      return res.status(401).json({
-
-        success: false,
-
-        error:
-          "Unauthorized platform request"
-
-      })
+      return
 
     }
 
@@ -297,12 +595,21 @@ async function identifyShopifyUser(
     */
 
     const {
+
       shop_id,
+
       shop_domain,
+
       shop_name,
+
       shop_email,
-      currency
-    } = req.body
+
+      currency,
+
+      connection_intent
+
+    } =
+      req.body
 
 
     /*
@@ -315,7 +622,9 @@ async function identifyShopifyUser(
       String(
         shop_domain || ""
       )
+
         .trim()
+
         .toLowerCase()
 
 
@@ -335,17 +644,15 @@ async function identifyShopifyUser(
     --------------------------------
     NORMALIZE CURRENCY
     --------------------------------
-
-    Shopify is authoritative for
-    the store's currency.
-    --------------------------------
     */
 
     const normalizedCurrency =
       String(
         currency || "USD"
       )
+
         .trim()
+
         .toUpperCase()
 
 
@@ -359,7 +666,8 @@ async function identifyShopifyUser(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "shop_id is required"
@@ -373,12 +681,53 @@ async function identifyShopifyUser(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "shop_domain is required"
 
       })
+
+    }
+
+
+    /*
+    =================================
+    VERIFY CONNECTION INTENT
+    =================================
+    */
+
+    const connectionIntent =
+      verifyShopifyConnectionIntent(
+        connection_intent
+      )
+
+
+    let intendedUser = null
+
+
+    if (connectionIntent) {
+
+      intendedUser =
+        await User.findById(
+          connectionIntent.user_id
+        )
+
+
+      if (!intendedUser) {
+
+        return res.status(401).json({
+
+          success:
+            false,
+
+          error:
+            "Shopify connection account no longer exists"
+
+        })
+
+      }
 
     }
 
@@ -395,13 +744,17 @@ async function identifyShopifyUser(
         $or: [
 
           {
+
             "shopify.shop_id":
               String(shop_id)
+
           },
 
           {
+
             "shopify.shop_domain":
               normalizedDomain
+
           }
 
         ],
@@ -414,7 +767,209 @@ async function identifyShopifyUser(
 
     /*
     =================================
+    EXPLICIT WEB-FIRST CONNECTION
+    =================================
+
+    If the merchant initiated
+    Shopify connection from the
+    authenticated Guava dashboard,
+    the signed connection intent
+    is authoritative.
+
+    We do NOT use shop_email to
+    choose another merchant.
+    =================================
+    */
+
+    if (intendedUser) {
+
+      /*
+      --------------------------------
+      EXISTING SHOPIFY STORE
+      --------------------------------
+      */
+
+      if (store) {
+
+        const existingOwner =
+          await User.findById(
+            store.merchant_id
+          )
+
+
+        /*
+        --------------------------------
+        SECURITY CHECK
+        --------------------------------
+
+        A Shopify store already owned
+        by another Guava user cannot
+        be silently claimed.
+        --------------------------------
+        */
+
+        if (
+          existingOwner &&
+          String(
+            existingOwner._id
+          ) !==
+          String(
+            intendedUser._id
+          )
+        ) {
+
+          return res.status(409).json({
+
+            success:
+              false,
+
+            error:
+              "This Shopify store is already connected to another Guava account"
+
+          })
+
+        }
+
+
+        /*
+        --------------------------------
+        REPAIR MISSING OWNER
+        --------------------------------
+        */
+
+        store.merchant_id =
+          intendedUser._id
+
+      } else {
+
+        /*
+        --------------------------------
+        CREATE STORE FOR INTENDED USER
+        --------------------------------
+        */
+
+        store =
+          await Store.create({
+
+            merchant_id:
+              intendedUser._id,
+
+            store_name:
+              shop_name ||
+              normalizedDomain,
+
+            industry:
+              "ecommerce",
+
+            currency:
+              normalizedCurrency,
+
+            platform:
+              "shopify",
+
+            platform_connected:
+              true,
+
+            platform_connection_status:
+              "connected",
+
+            shopify: {
+
+              shop_id:
+                String(shop_id),
+
+              shop_domain:
+                normalizedDomain,
+
+              connected:
+                true
+
+            }
+
+          })
+
+      }
+
+
+      /*
+      --------------------------------
+      UPDATE SHOPIFY CONNECTION
+      --------------------------------
+      */
+
+      store.shopify =
+        store.shopify || {}
+
+
+      store.shopify.shop_id =
+        String(shop_id)
+
+
+      store.shopify.shop_domain =
+        normalizedDomain
+
+
+      store.shopify.connected =
+        true
+
+
+      if (shop_name) {
+
+        store.store_name =
+          shop_name
+
+      }
+
+
+      store.currency =
+        normalizedCurrency
+
+
+      store.platform =
+        "shopify"
+
+
+      store.platform_connected =
+        true
+
+
+      store.platform_connection_status =
+        "connected"
+
+
+      await store.save()
+
+
+      /*
+      --------------------------------
+      CREATE GUARAV SESSION
+      --------------------------------
+
+      The authenticated Guava user
+      remains the canonical identity.
+      --------------------------------
+      */
+
+      return createSessionAndRespond(
+
+        res,
+
+        intendedUser
+
+      )
+
+    }
+
+
+    /*
+    =================================
     EXISTING SHOPIFY STORE
+    =================================
+
+    Shopify-first returning merchant.
+
+    The existing Store determines
+    ownership.
     =================================
     */
 
@@ -432,11 +987,18 @@ async function identifyShopifyUser(
         )
 
 
+      /*
+      --------------------------------
+      STORE WITHOUT USER
+      --------------------------------
+      */
+
       if (!user) {
 
         return res.status(409).json({
 
-          success: false,
+          success:
+            false,
 
           error:
             "Shopify store exists but its merchant account could not be found"
@@ -448,7 +1010,7 @@ async function identifyShopifyUser(
 
       /*
       --------------------------------
-      ENSURE SHOPIFY OBJECT EXISTS
+      ENSURE SHOPIFY OBJECT
       --------------------------------
       */
 
@@ -476,7 +1038,7 @@ async function identifyShopifyUser(
 
       /*
       --------------------------------
-      UPDATE STORE NAME
+      STORE NAME
       --------------------------------
       */
 
@@ -490,7 +1052,7 @@ async function identifyShopifyUser(
 
       /*
       --------------------------------
-      UPDATE CURRENCY
+      CURRENCY
       --------------------------------
       */
 
@@ -514,81 +1076,22 @@ async function identifyShopifyUser(
         "connected"
 
 
-      /*
-      --------------------------------
-      SAVE STORE
-      --------------------------------
-      */
-
       await store.save()
 
 
       /*
       --------------------------------
-      CREATE SESSION
+      CREATE GUARAVA SESSION
       --------------------------------
       */
 
-      const accessToken =
-        generateAccessToken(user)
+      return createSessionAndRespond(
 
+        res,
 
-      const refreshToken =
-        generateRefreshToken(user)
-
-
-      res.cookie(
-
-        "refresh_token",
-
-        refreshToken,
-
-        {
-
-          httpOnly: true,
-
-          secure: true,
-
-          sameSite: "none",
-
-          maxAge:
-            30 *
-            24 *
-            60 *
-            60 *
-            1000
-
-        }
+        user
 
       )
-
-
-      /*
-      --------------------------------
-      RETURN EXISTING IDENTITY
-      --------------------------------
-      */
-
-      return res.json({
-
-        success: true,
-
-        authenticated: true,
-
-        existing_user: true,
-
-        requires_email_verification:
-          false,
-
-        token:
-          accessToken,
-
-        user,
-
-        store_id:
-          store._id
-
-      })
 
     }
 
@@ -597,17 +1100,14 @@ async function identifyShopifyUser(
     =================================
     NEW SHOPIFY STORE
     =================================
-
-    The store does not currently
-    exist in AI Commerce.
-    =================================
     */
 
     if (!normalizedEmail) {
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "shop_email is required for a new Shopify identity"
@@ -617,11 +1117,16 @@ async function identifyShopifyUser(
     }
 
 
-    if (!isValidEmail(normalizedEmail)) {
+    if (
+      !isValidEmail(
+        normalizedEmail
+      )
+    ) {
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Invalid Shopify merchant email"
@@ -633,7 +1138,7 @@ async function identifyShopifyUser(
 
     /*
     =================================
-    FIND EXISTING AI COMMERCE USER
+    FIND EXISTING GUARVA USER
     =================================
     */
 
@@ -648,7 +1153,15 @@ async function identifyShopifyUser(
 
     /*
     =================================
-    EXISTING AI COMMERCE USER
+    EXISTING GUARVA USER
+    =================================
+
+    This is the WEB-FIRST path when
+    no explicit connection intent was
+    supplied.
+
+    We attach the Shopify store to
+    the existing User.
     =================================
     */
 
@@ -672,65 +1185,91 @@ async function identifyShopifyUser(
         })
 
 
-      if (existingShopifyStore) {
-
-        return res.status(409).json({
-
-          success: false,
-
-          error:
-            "This AI Commerce account already has a Shopify store"
-
-        })
-
-      }
-
-
       /*
       --------------------------------
-      CREATE SHOPIFY STORE
+      EXISTING SHOPIFY STORE
       --------------------------------
       */
 
-      store =
-        await Store.create({
+      if (existingShopifyStore) {
 
-          merchant_id:
-            user._id,
+        /*
+        If the Shopify domain is
+        different, don't silently
+        replace the connection.
+        */
 
-          store_name:
-            shop_name ||
-            normalizedDomain,
+        if (
+          existingShopifyStore.shopify?.shop_domain &&
+          existingShopifyStore.shopify.shop_domain !==
+            normalizedDomain
+        ) {
 
-          industry:
-            "ecommerce",
+          return res.status(409).json({
 
-          currency:
-            normalizedCurrency,
+            success:
+              false,
 
-          platform:
-            "shopify",
+            error:
+              "This Guava account already has a Shopify store"
 
-          platform_connected:
-            true,
+          })
 
-          platform_connection_status:
-            "connected",
+        }
 
-          shopify: {
 
-            shop_id:
-              String(shop_id),
+        store =
+          existingShopifyStore
 
-            shop_domain:
+      } else {
+
+        /*
+        --------------------------------
+        CREATE SHOPIFY STORE
+        --------------------------------
+        */
+
+        store =
+          await Store.create({
+
+            merchant_id:
+              user._id,
+
+            store_name:
+              shop_name ||
               normalizedDomain,
 
-            connected:
-              true
+            industry:
+              "ecommerce",
 
-          }
+            currency:
+              normalizedCurrency,
 
-        })
+            platform:
+              "shopify",
+
+            platform_connected:
+              true,
+
+            platform_connection_status:
+              "connected",
+
+            shopify: {
+
+              shop_id:
+                String(shop_id),
+
+              shop_domain:
+                normalizedDomain,
+
+              connected:
+                true
+
+            }
+
+          })
+
+      }
 
 
       /*
@@ -752,24 +1291,29 @@ async function identifyShopifyUser(
 
     /*
     =================================
-    NEW AI COMMERCE MERCHANT
+    NEW GUARVA MERCHANT
     =================================
 
-    We do NOT create the account yet.
+    No User exists yet.
 
-    The merchant must verify ownership
-    of the Shopify email through the
-    AI Commerce email OTP flow.
+    We DO NOT create an account merely
+    because Shopify supplied an email.
+
+    The Shopify merchant must complete
+    account creation / verification.
     =================================
     */
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
-      authenticated: false,
+      authenticated:
+        false,
 
-      existing_user: false,
+      existing_user:
+        false,
 
       requires_email_verification:
         true,
@@ -786,7 +1330,8 @@ async function identifyShopifyUser(
           normalizedDomain,
 
         shop_name:
-          shop_name || null,
+          shop_name ||
+          null,
 
         email:
           normalizedEmail,
@@ -801,21 +1346,27 @@ async function identifyShopifyUser(
   } catch (error) {
 
     console.error(
+
       "Shopify identity error:",
+
       error
+
     )
 
 
     return res.status(500).json({
 
-      success: false,
+      success:
+        false,
 
       error:
         "Failed to identify Shopify merchant",
 
       details:
         process.env.NODE_ENV === "production"
+
           ? undefined
+
           : error.message
 
     })
@@ -833,12 +1384,8 @@ SEND OTP
 OTP is stored in the dedicated
 Otp collection.
 
-This is important because a new
-merchant does not have a User record
-yet.
-
-Therefore registration OTPs cannot
-depend on User.otp_hash.
+This allows registration OTPs
+to work before a User exists.
 ================================
 */
 
@@ -871,7 +1418,8 @@ async function sendOtp(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Email is required"
@@ -881,11 +1429,14 @@ async function sendOtp(
     }
 
 
-    if (!isValidEmail(email)) {
+    if (
+      !isValidEmail(email)
+    ) {
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Invalid email"
@@ -930,7 +1481,9 @@ async function sendOtp(
       String(
         req.body.purpose || ""
       )
+
         .trim()
+
         .toLowerCase()
 
 
@@ -976,7 +1529,8 @@ async function sendOtp(
 
       return res.status(409).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "An account with this email already exists. Please sign in."
@@ -999,7 +1553,8 @@ async function sendOtp(
 
       return res.status(404).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "No account exists with this email. Please create an account."
@@ -1017,11 +1572,15 @@ async function sendOtp(
 
     const otp =
       String(
+
         Math.floor(
+
           100000 +
           Math.random() *
           900000
+
         )
+
       )
 
 
@@ -1033,20 +1592,18 @@ async function sendOtp(
 
     const expiresAt =
       new Date(
+
         Date.now() +
         10 *
         60 *
         1000
+
       )
 
 
     /*
     --------------------------------
     REMOVE PREVIOUS OTP
-    --------------------------------
-
-    Only one active OTP should exist
-    for an email + purpose.
     --------------------------------
     */
 
@@ -1110,7 +1667,8 @@ async function sendOtp(
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       message:
         "Verification code sent"
@@ -1120,14 +1678,18 @@ async function sendOtp(
   } catch (error) {
 
     console.error(
+
       "Send OTP error:",
+
       error
+
     )
 
 
     return res.status(500).json({
 
-      success: false,
+      success:
+        false,
 
       error:
         "Failed to send verification code"
@@ -1144,30 +1706,10 @@ async function sendOtp(
 VERIFY OTP
 ================================
 
-Handles both:
+Handles:
 
 1. New merchant registration
 2. Existing merchant sign in
-
-SIGNUP:
-
-email + otp + name
-        ↓
-verify OTP
-        ↓
-create User
-        ↓
-create session
-
-SIGNIN:
-
-email + otp
-        ↓
-verify OTP
-        ↓
-find User
-        ↓
-create session
 ================================
 */
 
@@ -1194,6 +1736,7 @@ async function verifyOtp(
       String(
         req.body.otp || ""
       )
+
         .trim()
 
 
@@ -1201,7 +1744,9 @@ async function verifyOtp(
       String(
         req.body.purpose || ""
       )
+
         .trim()
+
         .toLowerCase()
 
 
@@ -1215,7 +1760,8 @@ async function verifyOtp(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Email is required"
@@ -1225,11 +1771,14 @@ async function verifyOtp(
     }
 
 
-    if (!isValidEmail(email)) {
+    if (
+      !isValidEmail(email)
+    ) {
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Invalid email"
@@ -1249,7 +1798,8 @@ async function verifyOtp(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Verification code is required"
@@ -1259,11 +1809,14 @@ async function verifyOtp(
     }
 
 
-    if (!/^\d{6}$/.test(otp)) {
+    if (
+      !/^\d{6}$/.test(otp)
+    ) {
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Verification code must be 6 digits"
@@ -1347,7 +1900,8 @@ async function verifyOtp(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Invalid verification code"
@@ -1379,7 +1933,8 @@ async function verifyOtp(
 
       return res.status(400).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Verification code has expired"
@@ -1442,7 +1997,8 @@ async function verifyOtp(
 
         return res.status(409).json({
 
-          success: false,
+          success:
+            false,
 
           error:
             "An account with this email already exists. Please sign in."
@@ -1456,16 +2012,13 @@ async function verifyOtp(
       --------------------------------
       GET NAME
       --------------------------------
-
-      Registration sends the merchant
-      name together with the OTP.
-      --------------------------------
       */
 
       const name =
         String(
           req.body.name || ""
         )
+
           .trim()
 
 
@@ -1473,7 +2026,8 @@ async function verifyOtp(
 
         return res.status(400).json({
 
-          success: false,
+          success:
+            false,
 
           error:
             "Name is required to create your account"
@@ -1543,7 +2097,8 @@ async function verifyOtp(
 
         return res.status(404).json({
 
-          success: false,
+          success:
+            false,
 
           error:
             "Account not found. Please create an account."
@@ -1578,12 +2133,7 @@ async function verifyOtp(
 
     /*
     --------------------------------
-    INVALIDATE REMAINING OTPs
-    --------------------------------
-
-    Once authentication succeeds,
-    all OTPs for this email become
-    invalid.
+    INVALIDATE REMAINING OTPS
     --------------------------------
     */
 
@@ -1611,14 +2161,18 @@ async function verifyOtp(
   } catch (error) {
 
     console.error(
+
       "Verify OTP error:",
+
       error
+
     )
 
 
     return res.status(500).json({
 
-      success: false,
+      success:
+        false,
 
       error:
         "Verification failed"
@@ -1651,7 +2205,8 @@ async function refreshToken(
 
       return res.status(401).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Refresh token required"
@@ -1681,7 +2236,8 @@ async function refreshToken(
 
       return res.status(401).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "User not found"
@@ -1697,7 +2253,8 @@ async function refreshToken(
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       token:
         accessToken
@@ -1708,7 +2265,8 @@ async function refreshToken(
 
     return res.status(401).json({
 
-      success: false,
+      success:
+        false,
 
       error:
         "Invalid refresh token"
@@ -1735,6 +2293,7 @@ async function getSession(
 
     const token =
       req.headers.authorization
+
         ?.replace(
           "Bearer ",
           ""
@@ -1745,7 +2304,8 @@ async function getSession(
 
       return res.status(401).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "Authentication required"
@@ -1775,7 +2335,8 @@ async function getSession(
 
       return res.status(401).json({
 
-        success: false,
+        success:
+          false,
 
         error:
           "User not found"
@@ -1796,7 +2357,8 @@ async function getSession(
 
     return res.json({
 
-      success: true,
+      success:
+        true,
 
       user,
 
@@ -1811,7 +2373,8 @@ async function getSession(
 
     return res.status(401).json({
 
-      success: false,
+      success:
+        false,
 
       error:
         "Invalid session"
@@ -1840,11 +2403,14 @@ async function logout(
 
     {
 
-      httpOnly: true,
+      httpOnly:
+        true,
 
-      secure: true,
+      secure:
+        true,
 
-      sameSite: "none"
+      sameSite:
+        "none"
 
     }
 
@@ -1853,7 +2419,8 @@ async function logout(
 
   return res.json({
 
-    success: true,
+    success:
+      true,
 
     message:
       "Logged out"
@@ -1876,6 +2443,8 @@ module.exports = {
   verifyOtp,
 
   identifyShopifyUser,
+
+  createShopifyConnectionIntent,
 
   refreshToken,
 
