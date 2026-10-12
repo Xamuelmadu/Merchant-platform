@@ -9,6 +9,8 @@ const Otp = require("../models/otp")
 const emailService =
   require("../services/emailService")
 
+const ShopifyAuthHandoff =
+  require("../models/shopifyAuthHandoff")
 
 /*
 ================================
@@ -109,91 +111,394 @@ CREATE SESSION
 ================================
 */
 
+
 async function createSessionAndRespond(
   res,
-  user
+  user,
+  preferredStoreId = null
 ) {
+  const accessToken = generateAccessToken(user)
+  const refreshToken = generateRefreshToken(user)
 
-  const accessToken =
-    generateAccessToken(user)
+  const store = preferredStoreId
+    ? await Store.findOne({
+        _id: preferredStoreId,
+        merchant_id: user._id
+      })
+    : await Store.findOne({
+        merchant_id: user._id
+      })
 
-  const refreshToken =
-    generateRefreshToken(user)
-
-
-  /*
-  --------------------------------
-  FIND USER STORE
-  --------------------------------
-  */
-
-  const store =
-    await Store.findOne({
-
-      merchant_id:
-        user._id
-
-    })
-
-
-  /*
-  --------------------------------
-  REFRESH COOKIE
-  --------------------------------
-  */
-
-  res.cookie(
-
-    "refresh_token",
-
-    refreshToken,
-
-    {
-
-      httpOnly:
-        true,
-
-      secure:
-        true,
-
-      sameSite:
-        "none",
-
-      maxAge:
-        30 *
-        24 *
-        60 *
-        60 *
-        1000
-
-    }
-
-  )
-
-
-  /*
-  --------------------------------
-  RESPONSE
-  --------------------------------
-  */
-
-  return res.json({
-
-    success:
-      true,
-
-    token:
-      accessToken,
-
-    user,
-
-    store_id:
-      store
-        ? store._id
-        : null
-
+  res.cookie("refresh_token", refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    maxAge: 30 * 24 * 60 * 60 * 1000
   })
 
+  return res.json({
+    success: true,
+    token: accessToken,
+    user,
+    user_id: String(user._id),
+    store_id: store ? String(store._id) : null
+  })
+}
+
+
+
+/*
+================================
+SHOPIFY LOGIN HANDOFF
+================================
+*/
+
+function getConfiguredDashboardOrigin() {
+  const configuredUrl =
+    process.env.GUAVA_DASHBOARD_URL ||
+    process.env.DASHBOARD_URL
+
+  if (!configuredUrl) {
+    throw new Error(
+      "GUAVA_DASHBOARD_URL or DASHBOARD_URL is not configured."
+    )
+  }
+
+  const dashboardUrl = new URL(configuredUrl)
+
+  if (dashboardUrl.protocol !== "https:") {
+    throw new Error(
+      "The dashboard URL must use HTTPS."
+    )
+  }
+
+  return dashboardUrl.origin
+}
+
+
+function normalizeShopifyDomain(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+}
+
+
+async function createShopifyLoginHandoff(req, res) {
+  try {
+    if (!requirePlatformRequest(req, res)) {
+      return
+    }
+
+    const {
+      user_id,
+      store_id,
+      token,
+      shop_id,
+      shop_domain,
+      return_to
+    } = req.body || {}
+
+    if (
+      !user_id ||
+      !store_id ||
+      !token ||
+      !shop_id ||
+      !shop_domain ||
+      !return_to
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required Shopify handoff fields."
+      })
+    }
+
+    /*
+    --------------------------------
+    VERIFY MERCHANT IDENTITY TOKEN
+    --------------------------------
+    */
+
+    let decoded
+
+    try {
+      decoded = jwt.verify(
+        token,
+        process.env.JWT_SECRET
+      )
+    } catch {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid or expired merchant identity token."
+      })
+    }
+
+    if (String(decoded.id) !== String(user_id)) {
+      return res.status(403).json({
+        success: false,
+        error: "Merchant identity does not match the token."
+      })
+    }
+
+    const user = await User.findById(user_id)
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "Merchant account not found."
+      })
+    }
+
+    /*
+    --------------------------------
+    VALIDATE RETURN DESTINATION
+    --------------------------------
+    */
+
+    let returnUrl
+
+    try {
+      returnUrl = new URL(return_to)
+
+      const dashboardOrigin =
+        getConfiguredDashboardOrigin()
+
+      if (
+        returnUrl.origin !== dashboardOrigin ||
+        returnUrl.pathname !== "/auth/shopify/callback" ||
+        returnUrl.protocol !== "https:"
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Shopify return destination."
+        })
+      }
+    } catch (error) {
+      if (
+        error.message ===
+        "GUAVA_DASHBOARD_URL or DASHBOARD_URL is not configured."
+      ) {
+        throw error
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: "Invalid Shopify return destination."
+      })
+    }
+
+    /*
+    --------------------------------
+    VERIFY STORE OWNERSHIP
+    --------------------------------
+    */
+
+    const normalizedDomain =
+      normalizeShopifyDomain(shop_domain)
+
+    const store = await Store.findOne({
+      _id: store_id,
+      merchant_id: user._id,
+      platform: "shopify",
+      "shopify.shop_id": String(shop_id),
+      "shopify.shop_domain": normalizedDomain
+    })
+
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: "Shopify store does not belong to this merchant."
+      })
+    }
+
+    /*
+    --------------------------------
+    ISSUE ONE-TIME HANDOFF CODE
+    --------------------------------
+    */
+
+    const code =
+      crypto.randomBytes(32).toString("hex")
+
+    const tokenHash =
+      crypto
+        .createHash("sha256")
+        .update(code)
+        .digest("hex")
+
+    const expiresAt =
+      new Date(Date.now() + 5 * 60 * 1000)
+
+    await ShopifyAuthHandoff.create({
+      type: "login_handoff",
+      token_hash: tokenHash,
+      user_id: user._id,
+      store_id: store._id,
+      shop_id: String(shop_id),
+      shop_domain: normalizedDomain,
+      expires_at: expiresAt
+    })
+
+    return res.json({
+      success: true,
+      code,
+      expires_in: 300
+    })
+  } catch (error) {
+    console.error(
+      "Shopify handoff creation failed:",
+      error
+    )
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to create Shopify login handoff."
+    })
+  }
+}
+
+
+async function redeemShopifyLoginHandoff(req, res) {
+  try {
+    /*
+    --------------------------------
+    VALIDATE DASHBOARD ORIGIN
+    --------------------------------
+    */
+
+    let dashboardOrigin
+
+    try {
+      dashboardOrigin =
+        getConfiguredDashboardOrigin()
+    } catch (error) {
+      console.error(error)
+
+      return res.status(500).json({
+        success: false,
+        error: "Dashboard origin is not configured."
+      })
+    }
+
+    const requestOrigin = req.get("origin")
+
+    if (
+      requestOrigin &&
+      requestOrigin !== dashboardOrigin
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: "Invalid redemption origin."
+      })
+    }
+
+    const code =
+      String(req.body?.code || "").trim()
+
+    if (!/^[a-f0-9]{64}$/i.test(code)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid or expired handoff code."
+      })
+    }
+
+    const tokenHash =
+      crypto
+        .createHash("sha256")
+        .update(code)
+        .digest("hex")
+
+    /*
+    --------------------------------
+    ATOMIC SINGLE-USE REDEMPTION
+    --------------------------------
+
+    A concurrent or repeated request
+    cannot consume the same code twice.
+    --------------------------------
+    */
+
+    const handoff =
+      await ShopifyAuthHandoff.findOneAndUpdate(
+        {
+          type: "login_handoff",
+          token_hash: tokenHash,
+          used_at: null,
+          expires_at: {
+            $gt: new Date()
+          }
+        },
+        {
+          $set: {
+            used_at: new Date()
+          }
+        },
+        {
+          new: true
+        }
+      )
+
+    if (!handoff) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid, expired, or already-used handoff code."
+      })
+    }
+
+    /*
+    --------------------------------
+    RECHECK MERCHANT AND STORE
+    --------------------------------
+    */
+
+    const user = await User.findById(
+      handoff.user_id
+    )
+
+    const store = handoff.store_id
+      ? await Store.findOne({
+          _id: handoff.store_id,
+          merchant_id: handoff.user_id,
+          platform: "shopify",
+          "shopify.shop_id": handoff.shop_id,
+          "shopify.shop_domain": handoff.shop_domain
+        })
+      : null
+
+    if (!user || !store) {
+      return res.status(401).json({
+        success: false,
+        error: "The Shopify merchant or store could not be verified."
+      })
+    }
+
+    /*
+    --------------------------------
+    ESTABLISH EXISTING DASHBOARD SESSION
+    --------------------------------
+
+    Reuse the current JWT and refresh
+    cookie implementation.
+    --------------------------------
+    */
+
+    
+return await createSessionAndRespond(
+  res,
+  user,
+  handoff.store_id
+)
+
+  } catch (error) {
+    console.error(
+      "Shopify handoff redemption failed:",
+      error
+    )
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to complete Shopify login."
+    })
+  }
 }
 
 
@@ -951,12 +1256,10 @@ async function identifyShopifyUser(
       */
 
       return createSessionAndRespond(
-
-        res,
-
-        intendedUser
-
-      )
+  res,
+  intendedUser,
+  store._id
+)
 
     }
 
@@ -1085,13 +1388,11 @@ async function identifyShopifyUser(
       --------------------------------
       */
 
-      return createSessionAndRespond(
-
-        res,
-
-        user
-
-      )
+     return createSessionAndRespond(
+  res,
+  user,
+  store._id
+)
 
     }
 
@@ -1279,12 +1580,10 @@ async function identifyShopifyUser(
       */
 
       return createSessionAndRespond(
-
-        res,
-
-        user
-
-      )
+  res,
+  user,
+  store._id
+)
 
     }
 
@@ -2453,6 +2752,9 @@ module.exports = {
   logout,
 
   generateAccessToken,
+
+  createShopifyLoginHandoff,
+ redeemShopifyLoginHandoff,
 
   generateRefreshToken
 
