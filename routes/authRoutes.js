@@ -18,6 +18,9 @@ const {
   createShopifyLoginHandoff,
   redeemShopifyLoginHandoff,
 
+  createWooCommerceHandoff,
+  redeemWooCommerceHandoff,
+
   // Token management
   refreshToken,
   getSession,
@@ -144,6 +147,27 @@ router.get(
 router.post(
   "/logout",
   logout
+);
+
+/*
+========================================
+WOOCOMMERCE CONNECTION HANDOFF
+========================================
+*/
+
+// Only an authenticated Guava merchant can
+// initiate a WooCommerce connection.
+router.post(
+  "/woocommerce/handoff",
+  auth,
+  createWooCommerceHandoff
+);
+
+// WordPress redeems the one-time code server-to-server.
+// Security is enforced by the code, state and URL binding.
+router.post(
+  "/woocommerce/handoff/redeem",
+  redeemWooCommerceHandoff
 );
 
 /*

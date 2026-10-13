@@ -12,6 +12,8 @@ const emailService =
 const ShopifyAuthHandoff =
   require("../models/shopifyAuthHandoff")
 
+const WooCommerceAuthHandoff = require("../models/woocommerceAuthHandoff");
+
 /*
 ================================
 TOKEN HELPERS
@@ -1674,6 +1676,474 @@ async function identifyShopifyUser(
 
 }
 
+/*
+|--------------------------------------------------------------------------
+| WOOCOMMERCE AUTHENTICATION HANDOFF
+|--------------------------------------------------------------------------
+|
+| Guava Dashboard
+|       |
+|       v
+| Create single-use handoff
+|       |
+|       v
+| WooCommerce plugin
+|       |
+|       v
+| Redeem handoff
+|       |
+|       v
+| Short-lived integration token
+|
+|--------------------------------------------------------------------------
+*/
+
+function normalizeWooCommerceUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      return null;
+    }
+
+    if (
+      parsed.protocol === "http:" &&
+      !["localhost", "127.0.0.1"].includes(parsed.hostname)
+    ) {
+      return null;
+    }
+
+    if (parsed.username || parsed.password) {
+      return null;
+    }
+
+    // Canonicalize the store to its origin.
+    // Paths, query strings and fragments are not retained.
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function hashWooCommerceValue(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value))
+    .digest("hex");
+}
+
+function generateWooCommerceIntegrationToken({
+  merchantId,
+  storeId,
+  storeUrl,
+}) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured.");
+  }
+
+  return jwt.sign(
+    {
+      type: "woocommerce_integration",
+      merchant_id: String(merchantId),
+      store_id: String(storeId),
+      store_url: storeUrl,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "15m",
+      issuer: "guava",
+      audience: "woocommerce-plugin",
+    }
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| CREATE WOOCOMMERCE HANDOFF
+|--------------------------------------------------------------------------
+|
+| POST /api/auth/woocommerce/handoff
+|
+| Requires the existing Guava authentication middleware.
+| The merchant identity comes from req.user, never the request body.
+|
+*/
+
+async function createWooCommerceHandoff(req, res) {
+  try {
+    const authenticatedMerchantId = req.user?.id;
+
+    if (!authenticatedMerchantId) {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required.",
+      });
+    }
+
+    const {
+      store_id,
+      store_url,
+      callback_url,
+      state,
+    } = req.body || {};
+
+    if (!store_id || !store_url || !callback_url || !state) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required WooCommerce handoff fields.",
+      });
+    }
+
+    if (
+      typeof state !== "string" ||
+      state.length < 16 ||
+      state.length > 512
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid WooCommerce handoff state.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | NORMALIZE STORE URL
+    |--------------------------------------------------------------------------
+    */
+
+    const normalizedStoreUrl = normalizeWooCommerceUrl(store_url);
+
+    if (!normalizedStoreUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid WooCommerce store URL.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATE CALLBACK DESTINATION
+    |--------------------------------------------------------------------------
+    |
+    | Only allow the configured Guava dashboard origin and the
+    | expected WooCommerce callback path.
+    |
+    */
+
+    let normalizedCallbackUrl;
+
+    try {
+      const parsedCallbackUrl = new URL(
+        String(callback_url).trim()
+      );
+
+      const dashboardOrigin = getConfiguredDashboardOrigin();
+
+      if (
+        parsedCallbackUrl.origin !== dashboardOrigin ||
+        parsedCallbackUrl.protocol !== "https:" ||
+        parsedCallbackUrl.pathname !==
+          "/auth/woocommerce/callback" ||
+        parsedCallbackUrl.username ||
+        parsedCallbackUrl.password
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid WooCommerce callback destination.",
+        });
+      }
+
+      normalizedCallbackUrl =
+        parsedCallbackUrl.origin +
+        parsedCallbackUrl.pathname;
+    } catch (error) {
+      if (
+        error.message ===
+        "GUAVA_DASHBOARD_URL or DASHBOARD_URL is not configured."
+      ) {
+        throw error;
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: "Invalid WooCommerce callback destination.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY MERCHANT
+    |--------------------------------------------------------------------------
+    */
+
+    const merchant = await User.findById(
+      authenticatedMerchantId
+    );
+
+    if (!merchant) {
+      return res.status(404).json({
+        success: false,
+        error: "Merchant account not found.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY STORE OWNERSHIP AND PLATFORM
+    |--------------------------------------------------------------------------
+    |
+    | Only the authenticated merchant's WooCommerce store can be used.
+    |
+    */
+
+    const store = await Store.findOne({
+      _id: store_id,
+      merchant_id: merchant._id,
+      platform: "woocommerce",
+    });
+
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error:
+          "WooCommerce store does not belong to this merchant.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY REGISTERED STORE URL
+    |--------------------------------------------------------------------------
+    |
+    | Store schema:
+    | store.woocommerce.store_url
+    |
+    */
+
+    const registeredStoreUrl = normalizeWooCommerceUrl(
+      store.woocommerce?.store_url || ""
+    );
+
+    if (
+      !registeredStoreUrl ||
+      registeredStoreUrl !== normalizedStoreUrl
+    ) {
+      return res.status(403).json({
+        success: false,
+        error:
+          "WooCommerce URL does not match the registered store.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE SINGLE-USE HANDOFF
+    |--------------------------------------------------------------------------
+    |
+    | The raw code and state are returned to the caller.
+    | Only their SHA-256 hashes are persisted.
+    |
+    */
+
+    const code = crypto
+      .randomBytes(32)
+      .toString("hex");
+
+    const tokenHash = hashWooCommerceValue(code);
+    const stateHash = hashWooCommerceValue(state);
+
+    const expiresAt = new Date(
+      Date.now() + 5 * 60 * 1000
+    );
+
+    await WooCommerceAuthHandoff.create({
+      token_hash: tokenHash,
+      merchant_id: merchant._id,
+      store_id: store._id,
+      store_url: normalizedStoreUrl,
+      callback_url: normalizedCallbackUrl,
+      state_hash: stateHash,
+      expires_at: expiresAt,
+      used_at: null,
+    });
+
+    return res.json({
+      success: true,
+      code,
+      state,
+      callback_url: normalizedCallbackUrl,
+      expires_in: 300,
+    });
+  } catch (error) {
+    console.error(
+      "WooCommerce handoff creation failed:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to create WooCommerce handoff.",
+    });
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| REDEEM WOOCOMMERCE HANDOFF
+|--------------------------------------------------------------------------
+|
+| POST /api/auth/woocommerce/handoff/redeem
+|
+| Redeems a one-time code and issues a short-lived integration token.
+| This does not, by itself, mark the WooCommerce store as connected.
+|
+*/
+
+async function redeemWooCommerceHandoff(req, res) {
+  try {
+    const {
+      code,
+      state,
+    } = req.body || {};
+
+    if (
+      typeof code !== "string" ||
+      !/^[a-f0-9]{64}$/i.test(code) ||
+      typeof state !== "string" ||
+      state.length < 16 ||
+      state.length > 512
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid or expired WooCommerce handoff.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HASH CODE AND STATE
+    |--------------------------------------------------------------------------
+    */
+
+    const tokenHash = hashWooCommerceValue(code);
+    const stateHash = hashWooCommerceValue(state);
+
+    /*
+    |--------------------------------------------------------------------------
+    | ATOMIC SINGLE-USE REDEMPTION
+    |--------------------------------------------------------------------------
+    |
+    | Only one concurrent request can consume a valid handoff.
+    | Both the code and state hashes must match.
+    |
+    */
+
+    const handoff =
+      await WooCommerceAuthHandoff.findOneAndUpdate(
+        {
+          token_hash: tokenHash,
+          state_hash: stateHash,
+          used_at: null,
+          expires_at: {
+            $gt: new Date(),
+          },
+        },
+        {
+          $set: {
+            used_at: new Date(),
+          },
+        },
+        {
+          new: true,
+        }
+      );
+
+    if (!handoff) {
+      return res.status(401).json({
+        success: false,
+        error:
+          "Invalid, expired, or already-used WooCommerce handoff.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | REVERIFY MERCHANT AND STORE
+    |--------------------------------------------------------------------------
+    */
+
+    const merchant = await User.findById(
+      handoff.merchant_id
+    );
+
+    const store = await Store.findOne({
+      _id: handoff.store_id,
+      merchant_id: handoff.merchant_id,
+      platform: "woocommerce",
+    });
+
+    if (!merchant || !store) {
+      return res.status(401).json({
+        success: false,
+        error:
+          "WooCommerce merchant or store could not be verified.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | REVERIFY STORE URL
+    |--------------------------------------------------------------------------
+    */
+
+    const registeredStoreUrl = normalizeWooCommerceUrl(
+      store.woocommerce?.store_url || ""
+    );
+
+    if (
+      !registeredStoreUrl ||
+      registeredStoreUrl !== handoff.store_url
+    ) {
+      return res.status(401).json({
+        success: false,
+        error: "WooCommerce store URL verification failed.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ISSUE SHORT-LIVED INTEGRATION TOKEN
+    |--------------------------------------------------------------------------
+    */
+
+    const integrationToken =
+      generateWooCommerceIntegrationToken({
+        merchantId: merchant._id,
+        storeId: store._id,
+        storeUrl: handoff.store_url,
+      });
+
+    return res.json({
+      success: true,
+      token: integrationToken,
+      store_id: String(store._id),
+      store_url: handoff.store_url,
+      callback_url: handoff.callback_url,
+      expires_in: 900,
+    });
+  } catch (error) {
+    console.error(
+      "WooCommerce handoff redemption failed:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to redeem WooCommerce handoff.",
+    });
+  }
+}
+
 
 /*
 ================================
@@ -2755,6 +3225,9 @@ module.exports = {
 
   createShopifyLoginHandoff,
  redeemShopifyLoginHandoff,
+
+ createWooCommerceHandoff,
+  redeemWooCommerceHandoff,
 
   generateRefreshToken
 
