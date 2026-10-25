@@ -1,4 +1,4 @@
-const jwt = require("jsonwebtoken")
+﻿const jwt = require("jsonwebtoken")
 const crypto = require("crypto")
 const bcrypt = require("bcryptjs")
 
@@ -13,6 +13,8 @@ const ShopifyAuthHandoff =
   require("../models/shopifyAuthHandoff")
 
 const WooCommerceAuthHandoff = require("../models/woocommerceAuthHandoff");
+
+const ShopifyPendingInstallation = require("../models/shopifyPendingInstallation");
 
 /*
 ================================
@@ -66,6 +68,31 @@ function generateRefreshToken(user) {
 }
 
 
+function hashShopifyPendingToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+async function createShopifyPendingInstallation({
+  shop_id,
+  shop_domain,
+  shop_name,
+  shop_email,
+  currency,
+}) {
+  const token = crypto.randomBytes(32).toString("hex");
+
+  await ShopifyPendingInstallation.create({
+    token_hash: hashShopifyPendingToken(token),
+    shop_id: String(shop_id),
+    shop_domain: String(shop_domain).toLowerCase().trim(),
+    shop_name: shop_name || "",
+    shop_email: shop_email || null,
+    currency,
+    expires_at: new Date(Date.now() + 10 * 60 * 1000),
+  });
+
+  return token;
+}
 /*
 ================================
 PLATFORM AUTHENTICATION
@@ -538,9 +565,9 @@ SHOPIFY CONNECTION INTENT
 This is the bridge between:
 
 Guava Web Dashboard
-        ↓
+        â†“
 Shopify App
-        ↓
+        â†“
 Guava Identity
 
 A web-authenticated Guava user
@@ -789,6 +816,7 @@ async function createShopifyConnectionIntent(
   }
 
 }
+
 
 
 /*
@@ -1592,56 +1620,37 @@ async function identifyShopifyUser(
 
     /*
     =================================
-    NEW GUARVA MERCHANT
+    NEW GUAVA MERCHANT
     =================================
-
-    No User exists yet.
-
-    We DO NOT create an account merely
-    because Shopify supplied an email.
-
-    The Shopify merchant must complete
-    account creation / verification.
+    A new account is not created until
+    email OTP verification succeeds.
+    The pending token links this
+    verified signup to this Shopify shop.
     =================================
     */
+    const pendingInstallationToken =
+      await createShopifyPendingInstallation({
+        shop_id: String(shop_id),
+        shop_domain: normalizedDomain,
+        shop_name: shop_name || "",
+        shop_email: normalizedEmail,
+        currency: normalizedCurrency,
+      });
 
     return res.json({
-
-      success:
-        true,
-
-      authenticated:
-        false,
-
-      existing_user:
-        false,
-
-      requires_email_verification:
-        true,
-
-      requires_account_creation:
-        true,
-
+      success: true,
+      authenticated: false,
+      existing_user: false,
+      requires_email_verification: true,
+      requires_account_creation: true,
+      pending_installation_token: pendingInstallationToken,
       shopify_identity: {
-
-        shop_id:
-          String(shop_id),
-
-        shop_domain:
-          normalizedDomain,
-
-        shop_name:
-          shop_name ||
-          null,
-
-        email:
-          normalizedEmail,
-
-        currency:
-          normalizedCurrency
-
-      }
-
+        shop_id: String(shop_id),
+        shop_domain: normalizedDomain,
+        shop_name: shop_name || null,
+        email: normalizedEmail,
+        currency: normalizedCurrency,
+      },
     })
 
   } catch (error) {
@@ -2488,6 +2497,11 @@ async function verifyOtp(
 ) {
 
   try {
+    const shopifyPendingToken =
+      String(req.body.shopify_pending_token || "").trim();
+
+    let pendingShopifyInstallation = null;
+    let preferredStoreId = null;
 
     /*
     --------------------------------
@@ -2713,16 +2727,56 @@ async function verifyOtp(
     }
 
 
+        /*
+    --------------------------------
+    VALIDATE OPTIONAL SHOPIFY INSTALL
+    --------------------------------
+    */
+    if (shopifyPendingToken) {
+      if (purpose !== "signup") {
+        return res.status(400).json({
+          success: false,
+          error: "Shopify installation can only be linked during signup.",
+        });
+      }
+
+      pendingShopifyInstallation =
+        await ShopifyPendingInstallation.findOne({
+          token_hash: hashShopifyPendingToken(shopifyPendingToken),
+          used_at: null,
+          expires_at: { $gt: new Date() },
+        });
+
+      if (!pendingShopifyInstallation) {
+        return res.status(400).json({
+          success: false,
+          error: "This Shopify registration link has expired or has already been used. Restart Shopify signup.",
+        });
+      }
+
+      const existingShopifyStore = await Store.findOne({
+        platform: "shopify",
+        $or: [
+          { "shopify.shop_id": pendingShopifyInstallation.shop_id },
+          { "shopify.shop_domain": pendingShopifyInstallation.shop_domain },
+        ],
+      });
+
+      if (existingShopifyStore) {
+        return res.status(409).json({
+          success: false,
+          error: "This Shopify store is already registered. Sign in to the existing Guava account.",
+        });
+      }
+    }
+
     /*
     --------------------------------
     MARK OTP VERIFIED
     --------------------------------
     */
-
-    otpRecord.verified =
-      true
-
-    await otpRecord.save()
+    otpRecord.verified = true;
+    await otpRecord.save();
 
 
     /*
@@ -2835,6 +2889,108 @@ async function verifyOtp(
             "free"
 
         })
+      if (pendingShopifyInstallation) {
+        let consumedInstallation = null;
+
+        try {
+          consumedInstallation =
+            await ShopifyPendingInstallation.findOneAndUpdate(
+              {
+                _id: pendingShopifyInstallation._id,
+                token_hash: hashShopifyPendingToken(shopifyPendingToken),
+                used_at: null,
+                expires_at: { $gt: new Date() },
+              },
+              { $set: { used_at: new Date() } },
+              { new: true }
+            );
+
+          if (!consumedInstallation) {
+            await User.deleteOne({ _id: user._id });
+
+            otpRecord.verified = false;
+            await otpRecord.save();
+
+            return res.status(409).json({
+              success: false,
+              error: "This Shopify registration link has already been used or expired. Restart Shopify signup.",
+            });
+          }
+
+          const store = await Store.create({
+            merchant_id: user._id,
+            store_name:
+              consumedInstallation.shop_name ||
+              consumedInstallation.shop_domain,
+            currency: consumedInstallation.currency,
+            platform: "shopify",
+            platform_connected: false,
+            platform_connection_status: "connecting",
+            shopify: {
+              shop_id: consumedInstallation.shop_id,
+              shop_domain: consumedInstallation.shop_domain,
+              connected: false,
+            },
+          });
+
+          preferredStoreId = store._id;
+        } catch (shopifySignupError) {
+          console.error(
+            "Shopify signup setup failed; attempting recovery:",
+            shopifySignupError
+          );
+
+          // Remove only a Shopify store associated with this new user
+          // and the installation being registered.
+          try {
+            await Store.deleteOne({
+              merchant_id: user._id,
+              platform: "shopify",
+              $or: [
+                { "shopify.shop_id": pendingShopifyInstallation.shop_id },
+                { "shopify.shop_domain": pendingShopifyInstallation.shop_domain },
+              ],
+            });
+          } catch (cleanupError) {
+            console.error("Shopify store cleanup failed:", cleanupError);
+          }
+
+          // Make the pending link reusable if this attempt consumed it.
+          if (consumedInstallation) {
+            try {
+              await ShopifyPendingInstallation.updateOne(
+                {
+                  _id: consumedInstallation._id,
+                  token_hash: hashShopifyPendingToken(shopifyPendingToken),
+                  used_at: { $ne: null },
+                },
+                { $set: { used_at: null } }
+              );
+            } catch (restoreError) {
+              console.error("Shopify token restoration failed:", restoreError);
+            }
+          }
+
+          // This user was created immediately before this Shopify block.
+          try {
+            await User.deleteOne({ _id: user._id });
+          } catch (cleanupError) {
+            console.error("New user cleanup failed:", cleanupError);
+          }
+
+          try {
+            otpRecord.verified = false;
+            await otpRecord.save();
+          } catch (otpRecoveryError) {
+            console.error("OTP recovery failed:", otpRecoveryError);
+          }
+
+          return res.status(500).json({
+            success: false,
+            error: "Shopify signup could not be completed. Please retry the registration.",
+          });
+        }
+      }
 
     }
 
@@ -2919,13 +3075,7 @@ async function verifyOtp(
     --------------------------------
     */
 
-    return createSessionAndRespond(
-
-      res,
-
-      user
-
-    )
+    return createSessionAndRespond(res, user, preferredStoreId)
 
   } catch (error) {
 
@@ -3232,3 +3382,6 @@ module.exports = {
   generateRefreshToken
 
 }
+
+
+

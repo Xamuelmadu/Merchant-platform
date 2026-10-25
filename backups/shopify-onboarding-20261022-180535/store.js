@@ -1,0 +1,559 @@
+const mongoose = require("mongoose")
+
+
+const StoreSchema = new mongoose.Schema({
+
+  /*
+  --------------------------------
+  MERCHANT OWNER
+  --------------------------------
+
+  Every store belongs to a User.
+
+  This is the primary relationship
+  between merchant authentication and
+  commerce data.
+  --------------------------------
+  */
+
+  merchant_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  BASIC STORE INFO
+  --------------------------------
+  */
+
+  store_name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+
+  industry: {
+    type: String,
+    default: "ecommerce"
+  },
+
+
+  /*
+  --------------------------------
+  STORE CURRENCY
+  --------------------------------
+
+  Canonical currency for the store.
+
+  This is populated from the native
+  commerce platform during connection
+  or synchronization.
+  --------------------------------
+  */
+
+  currency: {
+    type: String,
+    required: true,
+    default: "USD",
+    uppercase: true,
+    trim: true,
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  COMMERCE PLATFORM
+  --------------------------------
+  */
+
+  platform: {
+    type: String,
+    enum: [
+      "shopify",
+      "woocommerce",
+      "other"
+    ],
+    default: "other",
+    index: true
+  },
+
+  platform_connected: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+
+  platform_connection_status: {
+    type: String,
+    enum: [
+      "disconnected",
+      "connecting",
+      "connected",
+      "error"
+    ],
+    default: "disconnected",
+    index: true
+  },
+
+  platform_last_sync: {
+    type: Date
+  },
+
+  platform_sync_error: {
+    type: String
+  },
+
+
+  /*
+  --------------------------------
+  SHOPIFY INTEGRATION
+  --------------------------------
+  */
+
+  shopify: {
+
+    shop_id: {
+      type: String,
+      index: true
+    },
+
+    shop_domain: {
+      type: String,
+      index: true
+    },
+
+    access_token: {
+      type: String
+    },
+
+    connected: {
+      type: Boolean,
+      default: false
+    },
+
+    last_product_sync: {
+      type: Date
+    },
+
+    last_order_sync: {
+      type: Date
+    },
+
+    last_inventory_sync: {
+      type: Date
+    }
+
+  },
+
+
+  /*
+  --------------------------------
+  WOOCOMMERCE INTEGRATION
+  --------------------------------
+  */
+
+  woocommerce: {
+
+    /*
+    WooCommerce store URL
+    */
+
+    store_url: {
+      type: String,
+      trim: true
+    },
+
+
+    /*
+    WooCommerce REST API credentials
+    */
+
+    consumer_key: {
+      type: String
+    },
+
+    consumer_secret: {
+      type: String
+    },
+
+
+    /*
+    --------------------------------
+    PLUGIN CREDENTIAL
+    --------------------------------
+    */
+
+    plugin_credential_hash: {
+      type: String
+    },
+
+
+    /*
+    --------------------------------
+    WEBHOOK SECRET
+    --------------------------------
+    */
+
+    webhook_secret: {
+      type: String
+    },
+
+
+    /*
+    --------------------------------
+    CONNECTION STATE
+    --------------------------------
+    */
+
+    connected: {
+      type: Boolean,
+      default: false
+    },
+
+
+    /*
+    --------------------------------
+    SYNC STATE
+    --------------------------------
+    */
+
+    last_product_sync: {
+      type: Date
+    },
+
+    last_order_sync: {
+      type: Date
+    },
+
+    last_inventory_sync: {
+      type: Date
+    }
+
+  },
+
+
+  /*
+  --------------------------------
+  PLATFORM SUBSCRIPTION
+  --------------------------------
+  */
+
+  plan: {
+    type: String,
+    enum: [
+      "free",
+      "basic",
+      "pro",
+      "premium"
+    ],
+    default: "free",
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  BILLING CYCLE
+  --------------------------------
+
+  Controls whether the merchant's
+  current subscription is monthly
+  or yearly.
+  --------------------------------
+  */
+
+  billing_cycle: {
+    type: String,
+    enum: [
+      "monthly",
+      "yearly"
+    ],
+    default: "yearly",
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  SUBSCRIPTION STATUS
+  --------------------------------
+  */
+
+  subscription_status: {
+    type: String,
+    enum: [
+      "inactive",
+      "active",
+      "past_due",
+      "cancelled"
+    ],
+    default: "inactive",
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  SUBSCRIPTION RENEWAL
+  --------------------------------
+  */
+
+  subscription_renewal: {
+    type: Date
+  },
+
+
+  /*
+  --------------------------------
+  BILLING GRACE PERIOD
+  --------------------------------
+  */
+
+  billing_grace_until: {
+    type: Date
+  },
+
+
+  /*
+  --------------------------------
+  SYSTEM LOCK
+  --------------------------------
+  */
+
+  system_locked: {
+    type: Boolean,
+    default: false
+  },
+
+
+  /*
+  --------------------------------
+  PENDING SUBSCRIPTION
+  --------------------------------
+
+  These fields hold the subscription
+  selected by the merchant while the
+  Flutterwave payment is still pending.
+
+  IMPORTANT:
+
+  The actual plan is NOT changed until
+  payment has been verified successfully.
+  --------------------------------
+  */
+
+  pending_plan: {
+    type: String,
+    enum: [
+      "free",
+      "basic",
+      "pro",
+      "premium"
+    ],
+    default: null
+  },
+
+
+  pending_billing_cycle: {
+    type: String,
+    enum: [
+      "monthly",
+      "yearly"
+    ],
+    default: null
+  },
+
+
+  pending_subscription_reference: {
+    type: String,
+    default: "",
+    trim: true,
+    index: true
+  },
+
+
+  /*
+  --------------------------------
+  ORDER LIMITS
+  --------------------------------
+  */
+
+  monthly_order_limit: {
+    type: Number,
+    default: 20
+  },
+
+  orders_used: {
+    type: Number,
+    default: 0
+  },
+
+
+  /*
+  --------------------------------
+  PLATFORM FEES
+  --------------------------------
+
+  This is the transaction fee charged
+  by the Merchant Platform on commerce
+  transactions.
+
+  It is completely separate from the
+  subscription price.
+  --------------------------------
+  */
+
+  transaction_fee: {
+    type: Number,
+    default: 0.007
+  },
+
+  total_platform_fees: {
+    type: Number,
+    default: 0
+  },
+
+
+  /*
+  --------------------------------
+  STRIPE PLATFORM BILLING
+  --------------------------------
+  */
+
+  stripe_customer_id: {
+    type: String
+  },
+
+  stripe_payment_method: {
+    type: String
+  },
+
+
+  /*
+  --------------------------------
+  PAYSTACK PLATFORM BILLING
+  --------------------------------
+
+  Retained for existing platform
+  fee infrastructure.
+
+  Flutterwave is used for USD
+  subscription checkout.
+  --------------------------------
+  */
+
+  paystack_customer_code: {
+    type: String
+  },
+
+  paystack_authorization_code: {
+    type: String
+  },
+
+
+  /*
+  --------------------------------
+  MERCHANT PAYMENT SETTINGS
+  --------------------------------
+
+  These belong to the merchant's
+  native commerce checkout.
+
+  They are NOT used for platform
+  subscription billing.
+  --------------------------------
+  */
+
+  paystack_public_key: {
+    type: String
+  },
+
+  paystack_secret_key: {
+    type: String
+  },
+
+  stripe_public_key: {
+    type: String
+  },
+
+  stripe_secret_key: {
+    type: String
+  }
+
+}, {
+  timestamps: true
+})
+
+
+/*
+================================
+INDEXES
+================================
+*/
+
+
+/*
+Merchant → platform lookup
+*/
+
+StoreSchema.index({
+  merchant_id: 1,
+  platform: 1
+})
+
+
+/*
+Shopify store lookup
+*/
+
+StoreSchema.index({
+  "shopify.shop_domain": 1
+})
+
+
+/*
+WooCommerce store lookup
+*/
+
+StoreSchema.index({
+  "woocommerce.store_url": 1
+})
+
+
+/*
+Pending subscription lookup
+*/
+
+StoreSchema.index({
+  pending_subscription_reference: 1
+})
+
+
+/*
+Subscription management lookup
+*/
+
+StoreSchema.index({
+  plan: 1,
+  subscription_status: 1,
+  subscription_renewal: 1
+})
+
+
+/*
+================================
+EXPORT
+================================
+*/
+
+module.exports =
+  mongoose.models.Store ||
+  mongoose.model(
+    "Store",
+    StoreSchema
+  )
