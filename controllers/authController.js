@@ -1781,129 +1781,48 @@ function generateWooCommerceIntegrationToken({
 async function createWooCommerceHandoff(req, res) {
   try {
     const authenticatedMerchantId = req.user?.id;
-
     if (!authenticatedMerchantId) {
-      return res.status(401).json({
-        success: false,
-        error: "Authentication required.",
-      });
+      return res.status(401).json({ success: false, error: "Authentication required." });
     }
 
-    const {
-      store_id,
-      store_url,
-      callback_url,
-      state,
-    } = req.body || {};
-
+    const { store_id, store_url, callback_url, state } = req.body || {};
     if (!store_id || !store_url || !callback_url || !state) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing required WooCommerce handoff fields.",
-      });
+      return res.status(400).json({ success: false, error: "Missing required WooCommerce handoff fields." });
     }
-
-    if (
-      typeof state !== "string" ||
-      state.length < 16 ||
-      state.length > 512
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid WooCommerce handoff state.",
-      });
+    if (typeof state !== "string" || !/^[a-f0-9]{64}$/i.test(state)) {
+      return res.status(400).json({ success: false, error: "Invalid WooCommerce handoff state." });
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | NORMALIZE STORE URL
-    |--------------------------------------------------------------------------
-    */
 
     const normalizedStoreUrl = normalizeWooCommerceUrl(store_url);
-
-    if (!normalizedStoreUrl) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid WooCommerce store URL.",
-      });
+    if (!normalizedStoreUrl || !normalizedStoreUrl.startsWith("https://")) {
+      return res.status(400).json({ success: false, error: "Invalid WooCommerce store URL." });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDATE CALLBACK DESTINATION
-    |--------------------------------------------------------------------------
-    |
-    | Only allow the configured Guava dashboard origin and the
-    | expected WooCommerce callback path.
-    |
-    */
-
-    let normalizedCallbackUrl;
-
+    let callback;
     try {
-      const parsedCallbackUrl = new URL(
-        String(callback_url).trim()
-      );
-
-      const dashboardOrigin = getConfiguredDashboardOrigin();
-
-      if (
-        parsedCallbackUrl.origin !== dashboardOrigin ||
-        parsedCallbackUrl.protocol !== "https:" ||
-        parsedCallbackUrl.pathname !==
-          "/auth/woocommerce/callback" ||
-        parsedCallbackUrl.username ||
-        parsedCallbackUrl.password
-      ) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid WooCommerce callback destination.",
-        });
-      }
-
-      normalizedCallbackUrl =
-        parsedCallbackUrl.origin +
-        parsedCallbackUrl.pathname;
-    } catch (error) {
-      if (
-        error.message ===
-        "GUAVA_DASHBOARD_URL or DASHBOARD_URL is not configured."
-      ) {
-        throw error;
-      }
-
-      return res.status(400).json({
-        success: false,
-        error: "Invalid WooCommerce callback destination.",
-      });
+      callback = new URL(String(callback_url).trim());
+    } catch {
+      return res.status(400).json({ success: false, error: "Invalid WordPress callback destination." });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY MERCHANT
-    |--------------------------------------------------------------------------
-    */
+    const expectedCallbackOrigin = new URL(normalizedStoreUrl).origin;
+    if (
+      callback.protocol !== "https:" ||
+      callback.origin !== expectedCallbackOrigin ||
+      callback.pathname !== "/wp-admin/admin-post.php" ||
+      callback.searchParams.get("action") !== "ai_commerce_woocommerce_return" ||
+      callback.username ||
+      callback.password ||
+      callback.searchParams.has("code") ||
+      (callback.searchParams.has("state") && callback.searchParams.get("state") !== state)
+    ) {
+      return res.status(400).json({ success: false, error: "Invalid WordPress callback destination." });
+    }
 
-    const merchant = await User.findById(
-      authenticatedMerchantId
-    );
-
+    const merchant = await User.findById(authenticatedMerchantId);
     if (!merchant) {
-      return res.status(404).json({
-        success: false,
-        error: "Merchant account not found.",
-      });
+      return res.status(404).json({ success: false, error: "Merchant account not found." });
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY STORE OWNERSHIP AND PLATFORM
-    |--------------------------------------------------------------------------
-    |
-    | Only the authenticated merchant's WooCommerce store can be used.
-    |
-    */
 
     const store = await Store.findOne({
       _id: store_id,
@@ -1912,87 +1831,50 @@ async function createWooCommerceHandoff(req, res) {
     });
 
     if (!store) {
-      return res.status(403).json({
-        success: false,
-        error:
-          "WooCommerce store does not belong to this merchant.",
-      });
+      return res.status(403).json({ success: false, error: "WooCommerce store does not belong to this merchant." });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | VERIFY REGISTERED STORE URL
-    |--------------------------------------------------------------------------
-    |
-    | Store schema:
-    | store.woocommerce.store_url
-    |
-    */
-
-    const registeredStoreUrl = normalizeWooCommerceUrl(
-      store.woocommerce?.store_url || ""
-    );
-
-    if (
-      !registeredStoreUrl ||
-      registeredStoreUrl !== normalizedStoreUrl
-    ) {
-      return res.status(403).json({
-        success: false,
-        error:
-          "WooCommerce URL does not match the registered store.",
-      });
+    const registeredStoreUrl = normalizeWooCommerceUrl(store.woocommerce?.store_url || "");
+    if (!registeredStoreUrl || registeredStoreUrl !== normalizedStoreUrl) {
+      return res.status(403).json({ success: false, error: "WooCommerce URL does not match the registered store." });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | CREATE SINGLE-USE HANDOFF
-    |--------------------------------------------------------------------------
-    |
-    | The raw code and state are returned to the caller.
-    | Only their SHA-256 hashes are persisted.
-    |
-    */
+    // State may be present because the dashboard validates and binds it
+    // before calling this endpoint. Store a clean callback and add the
+    // code/state only to the final redirect URL.
+    callback.searchParams.delete("state");
+    const cleanCallbackUrl = callback.toString();
 
-    const code = crypto
-      .randomBytes(32)
-      .toString("hex");
-
+    const code = crypto.randomBytes(32).toString("hex");
     const tokenHash = hashWooCommerceValue(code);
     const stateHash = hashWooCommerceValue(state);
-
-    const expiresAt = new Date(
-      Date.now() + 5 * 60 * 1000
-    );
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await WooCommerceAuthHandoff.create({
       token_hash: tokenHash,
       merchant_id: merchant._id,
       store_id: store._id,
       store_url: normalizedStoreUrl,
-      callback_url: normalizedCallbackUrl,
+      callback_url: cleanCallbackUrl,
       state_hash: stateHash,
       expires_at: expiresAt,
       used_at: null,
     });
 
+    callback.searchParams.set("code", code);
+    callback.searchParams.set("state", state);
+
     return res.json({
       success: true,
       code,
       state,
-      callback_url: normalizedCallbackUrl,
+      callback_url: callback.toString(),
+      redirect_url: callback.toString(),
       expires_in: 300,
     });
   } catch (error) {
-    console.error(
-      "WooCommerce handoff creation failed:",
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      error: "Unable to create WooCommerce handoff.",
-    });
+    console.error("WooCommerce handoff creation failed:", error);
+    return res.status(500).json({ success: false, error: "Unable to create WooCommerce handoff." });
   }
 }
 
@@ -2135,6 +2017,7 @@ async function redeemWooCommerceHandoff(req, res) {
     return res.json({
       success: true,
       token: integrationToken,
+      integration_token: integrationToken,
       store_id: String(store._id),
       store_url: handoff.store_url,
       callback_url: handoff.callback_url,

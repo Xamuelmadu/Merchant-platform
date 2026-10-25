@@ -254,6 +254,128 @@ async function createStore(req, res) {
 
 
 
+
+/*
+|--------------------------------------------------------------------------
+| REGISTER OR REUSE WOOCOMMERCE STORE
+|--------------------------------------------------------------------------
+| Called after Guava authentication and before creating the browser handoff.
+| Store limits apply only when a new store is created.
+*/
+async function registerWooCommerceStore(req, res) {
+  try {
+    const merchantId = req.user?.id;
+    if (!merchantId) {
+      return res.status(401).json({ success: false, error: "Authentication required." });
+    }
+
+    const { store_url, store_name, currency } = req.body || {};
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(String(store_url || "").trim());
+    } catch {
+      return res.status(400).json({ success: false, error: "Invalid WooCommerce store URL." });
+    }
+
+    if (
+      parsedUrl.protocol !== "https:" ||
+      !parsedUrl.hostname ||
+      parsedUrl.username ||
+      parsedUrl.password ||
+      parsedUrl.search ||
+      parsedUrl.hash
+    ) {
+      return res.status(400).json({ success: false, error: "WooCommerce store URL must be a valid HTTPS URL without credentials, query parameters, or a fragment." });
+    }
+
+    const normalizedStoreUrl = parsedUrl.origin;
+    const normalizedCurrency = normalizeCurrency(currency) || "USD";
+
+    const existingStore = await Store.findOne({
+      merchant_id: merchantId,
+      platform: "woocommerce",
+      "woocommerce.store_url": normalizedStoreUrl,
+    });
+
+    if (existingStore) {
+      return res.status(200).json({
+        success: true,
+        reused: true,
+        store: {
+          id: String(existingStore._id),
+          store_id: String(existingStore._id),
+          store_name: existingStore.store_name,
+          store_url: normalizedStoreUrl,
+          platform: existingStore.platform,
+          platform_connected: existingStore.platform_connected,
+        },
+      });
+    }
+
+    const user = await User.findById(merchantId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: "Merchant account not found." });
+    }
+
+    const userPlan = user.plan || req.user.plan || "free";
+    const storeLimit = getStoreLimit(userPlan);
+    const currentCount = await Store.countDocuments({ merchant_id: merchantId });
+
+    if (currentCount >= storeLimit) {
+      return res.status(403).json({
+        success: false,
+        code: "STORE_LIMIT_REACHED",
+        error: `Store limit reached (${storeLimit}). Upgrade your plan.`,
+      });
+    }
+
+    const planConfig = getPlan(userPlan);
+    const hostname = parsedUrl.hostname;
+    const derivedName = hostname.replace(/^www\./i, "");
+    const finalStoreName = String(store_name || derivedName).trim().slice(0, 120);
+
+    if (!finalStoreName) {
+      return res.status(400).json({ success: false, error: "Store name is required." });
+    }
+
+    const store = await Store.create({
+      merchant_id: merchantId,
+      store_name: finalStoreName,
+      industry: "ecommerce",
+      currency: normalizedCurrency,
+      platform: "woocommerce",
+      platform_connected: false,
+      platform_connection_status: "connecting",
+      whatsapp_number: user.phone || "",
+      plan: userPlan,
+      transaction_fee: planConfig.transaction_fee,
+      orders_used: 0,
+      subscription_status: "active",
+      subscription_renewal: null,
+      woocommerce: {
+        store_url: normalizedStoreUrl,
+        connected: false,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      reused: false,
+      store: {
+        id: String(store._id),
+        store_id: String(store._id),
+        store_name: store.store_name,
+        store_url: normalizedStoreUrl,
+        platform: store.platform,
+        platform_connected: store.platform_connected,
+      },
+    });
+  } catch (error) {
+    console.error("Register WooCommerce store error:", error);
+    return res.status(500).json({ success: false, error: "Unable to register WooCommerce store." });
+  }
+}
+
 /*
 --------------------------------
 GET ALL STORES
@@ -1258,6 +1380,8 @@ async function connectShopify(
 module.exports = {
 
   createStore,
+
+  registerWooCommerceStore,
 
   getStores,
 

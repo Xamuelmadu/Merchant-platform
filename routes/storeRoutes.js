@@ -25,6 +25,13 @@ router.post(
   storeController.createStore
 )
 
+/* WooCommerce onboarding: register/reuse a merchant-owned store. */
+router.post(
+  "/woocommerce/register",
+  auth,
+  storeController.registerWooCommerceStore
+)
+
 
 /*
 --------------------------------
