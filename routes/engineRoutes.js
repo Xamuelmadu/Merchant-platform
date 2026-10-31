@@ -3,21 +3,65 @@ const router = express.Router()
 
 const Store = require("../models/store")
 
+const customerConversationAuth = require(
+  "../middleware/customerConversationAuth"
+)
 
-router.get("/merchant/:number", async (req,res)=>{
+const {
+  handleCustomerConversation
+} = require(
+  "../controllers/conversationController"
+)
 
-  const number = req.params.number
+/*
+================================
+MERCHANT LOOKUP
+================================
+*/
 
-  const store = await Store.findOne({
-    whatsapp_number:number
-  })
+router.get("/merchant/:number", async (req, res) => {
+  try {
+    const number = req.params.number
 
-  if(!store){
-    return res.json(null)
+    const store = await Store.findOne({
+      whatsapp_number: number
+    })
+
+    if (!store) {
+      return res.json(null)
+    }
+
+    return res.json(store)
+
+  } catch (error) {
+    console.error("Merchant lookup error:", error)
+
+    return res.status(500).json({
+      success: false,
+      error: "Merchant lookup failed"
+    })
   }
-
-  res.json(store)
-
 })
+
+/*
+================================
+CUSTOMER CONVERSATION
+================================
+
+Shopify / WooCommerce / custom
+storefront chatbot endpoint.
+
+POST /api/engine/conversation
+
+Uses the existing customer conversation
+authentication and handler.
+================================
+*/
+
+router.post(
+  "/conversation",
+  customerConversationAuth,
+  handleCustomerConversation
+)
 
 module.exports = router
