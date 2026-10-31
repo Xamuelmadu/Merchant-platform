@@ -13,7 +13,7 @@ const ShopifyAuthHandoff =
   require("../models/shopifyAuthHandoff")
 
 const WooCommerceAuthHandoff = require("../models/woocommerceAuthHandoff");
-
+const IntegrationToken = require("../models/integrationToken");
 const ShopifyPendingInstallation = require("../models/shopifyPendingInstallation");
 
 /*
@@ -2003,16 +2003,62 @@ async function redeemWooCommerceHandoff(req, res) {
 
     /*
     |--------------------------------------------------------------------------
-    | ISSUE SHORT-LIVED INTEGRATION TOKEN
+    | INVALIDATE PREVIOUS UNUSED INTEGRATION TOKENS
     |--------------------------------------------------------------------------
+    |
+    | Ensure that an older installation token cannot be reused.
+    |
+    */
+
+    await IntegrationToken.updateMany(
+      {
+        merchant_id: merchant._id,
+        type: "woocommerce",
+        used: false,
+      },
+      {
+        $set: {
+          used: true,
+          used_at: new Date(),
+        },
+      }
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | GENERATE DATABASE-BACKED INTEGRATION TOKEN
+    |--------------------------------------------------------------------------
+    |
+    | The existing WooCommerce connection endpoint expects:
+    | - A random raw token.
+    | - Its SHA-256 hash stored in IntegrationToken.
+    | - An unused token.
+    | - An unexpired token.
+    |
     */
 
     const integrationToken =
-      generateWooCommerceIntegrationToken({
-        merchantId: merchant._id,
-        storeId: store._id,
-        storeUrl: handoff.store_url,
-      });
+      crypto.randomBytes(32).toString("hex");
+
+    const integrationTokenHash =
+      hashWooCommerceValue(integrationToken);
+
+    const expiresAt = new Date(
+      Date.now() + 15 * 60 * 1000
+    );
+
+    await IntegrationToken.create({
+      merchant_id: merchant._id,
+      type: "woocommerce",
+      token_hash: integrationTokenHash,
+      expires_at: expiresAt,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | RETURN INTEGRATION TOKEN TO WORDPRESS
+    |--------------------------------------------------------------------------
+    */
 
     return res.json({
       success: true,
@@ -2023,6 +2069,7 @@ async function redeemWooCommerceHandoff(req, res) {
       callback_url: handoff.callback_url,
       expires_in: 900,
     });
+
   } catch (error) {
     console.error(
       "WooCommerce handoff redemption failed:",
