@@ -1,7 +1,25 @@
+$ErrorActionPreference = "Stop"
+
+$projectPath = "C:\Users\Hp laptop\whatsapp-commerce-platform\merchant-platform"
+$targetPath = Join-Path $projectPath "controllers\webhookController.js"
+
+if (-not (Test-Path $projectPath)) {
+    throw "Project directory not found: $projectPath"
+}
+
+$controllerCode = @'
 const crypto = require("crypto")
 
 const Store = require("../models/store")
 const { getPlan } = require("../config/plan")
+
+const Product = require("../models/product")
+const Customer = require("../models/customer")
+const Order = require("../models/order")
+
+const {
+  syncWooProduct
+} = require("../services/woocommerceService")
 
 
 
@@ -847,12 +865,757 @@ EXPORTS
 ================================
 */
 
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK HELPERS
+================================
+*/
+
+function normalizeWebhookStoreUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim())
+
+    return (
+      url.origin.toLowerCase() +
+      url.pathname.replace(/\/+$/, "").toLowerCase()
+    )
+  } catch {
+    return null
+  }
+}
+
+
+function getWooCustomerName(billing = {}) {
+  return [
+    billing.first_name,
+    billing.last_name
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim()
+}
+
+
+function getWooCustomerAddress(billing = {}) {
+  return [
+    billing.address_1,
+    billing.address_2,
+    billing.city,
+    billing.state,
+    billing.postcode,
+    billing.country
+  ]
+    .filter(Boolean)
+    .join(", ")
+}
+
+
+function mapWooOrderStatus(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "completed":
+      return "completed"
+
+    case "processing":
+      return "paid"
+
+    case "cancelled":
+    case "refunded":
+      return "cancelled"
+
+    default:
+      return "new"
+  }
+}
+
+
+function mapWooPaymentStatus(order) {
+  const status = String(order.status || "").toLowerCase()
+
+  if (status === "refunded") return "refunded"
+  if (status === "failed") return "failed"
+  if (status === "cancelled") return "cancelled"
+
+  if (
+    order.date_paid ||
+    status === "processing" ||
+    status === "completed"
+  ) {
+    return "paid"
+  }
+
+  return "pending"
+}
+
+
+/*
+================================
+FIND CONNECTED WOOCOMMERCE STORE
+================================
+
+The WooCommerce source header is not
+trusted by itself. It is matched against
+a connected store URL before the HMAC
+signature is checked with that store's
+stored webhook secret.
+================================
+*/
+
+async function findWooCommerceWebhookStore(sourceUrl) {
+  const normalizedSource =
+    normalizeWebhookStoreUrl(sourceUrl)
+
+  if (!normalizedSource) {
+    return null
+  }
+
+  const stores = await Store.find({
+    "woocommerce.connected": true,
+    "woocommerce.webhook_secret": {
+      $exists: true,
+      $ne: ""
+    }
+  })
+
+  return stores.find(store => {
+    const storedUrl =
+      normalizeWebhookStoreUrl(
+        store.woocommerce?.store_url
+      )
+
+    return storedUrl === normalizedSource
+  }) || null
+}
+
+
+/*
+================================
+SYNC WOOCOMMERCE CUSTOMER
+================================
+
+Guest orders do not create customer
+records. Existing customers are matched
+by WooCommerce customer ID.
+
+The phone fallback avoids violating
+the model's unique store + phone index.
+================================
+*/
+
+async function syncWooCommerceCustomer(store, wooOrder) {
+  const billing = wooOrder.billing || {}
+
+  const externalCustomerId =
+    wooOrder.customer
+      ? String(wooOrder.customer)
+      : ""
+
+  if (!externalCustomerId) {
+    return null
+  }
+
+  const customerData = {
+    name: getWooCustomerName(billing),
+    email: String(billing.email || "")
+      .trim()
+      .toLowerCase(),
+    phone: String(billing.phone || "").trim(),
+    last_seen: new Date()
+  }
+
+  let customer = await Customer.findOne({
+    store_id: store._id,
+    source: "woocommerce",
+    external_id: externalCustomerId
+  })
+
+  if (customer) {
+    Object.assign(customer, customerData)
+    await customer.save()
+    return customer
+  }
+
+  // The Customer model has a unique store_id + phone
+  // index. Reuse an existing record rather than
+  // causing a duplicate-key error.
+  if (customerData.phone) {
+    customer = await Customer.findOne({
+      store_id: store._id,
+      phone: customerData.phone
+    })
+
+    if (customer) {
+      return customer
+    }
+  }
+
+  customer = await Customer.create({
+    store_id: store._id,
+    source: "woocommerce",
+    external_id: externalCustomerId,
+    ...customerData
+  })
+
+  return customer
+}
+
+
+/*
+================================
+SYNC WOOCOMMERCE ORDER
+================================
+
+Canonical identity:
+store_id + source + external_id
+
+Webhook retries update the existing
+order instead of creating duplicates.
+================================
+*/
+
+async function syncWooCommerceOrder(store, wooOrder) {
+  if (!wooOrder || !wooOrder.id) {
+    throw new Error("WooCommerce order ID is missing")
+  }
+
+  const billing = wooOrder.billing || {}
+
+  const customer =
+    await syncWooCommerceCustomer(store, wooOrder)
+
+  const wooLineItems =
+    Array.isArray(wooOrder.line_items)
+      ? wooOrder.line_items
+      : []
+
+  const externalProductIds = [
+    ...new Set(
+      wooLineItems
+        .map(item => String(item.product_id || ""))
+        .filter(Boolean)
+    )
+  ]
+
+  const internalProducts = externalProductIds.length
+    ? await Product.find({
+        store_id: store._id,
+        source: "woocommerce",
+        external_id: { $in: externalProductIds }
+      }).select("_id external_id")
+    : []
+
+  const productIdMap = new Map(
+    internalProducts.map(product => [
+      String(product.external_id),
+      product._id
+    ])
+  )
+
+  const items = wooLineItems.map(item => {
+    const externalProductId =
+      String(item.product_id || "")
+
+    const quantity =
+      Math.max(1, Number(item.quantity) || 1)
+
+    const unitPrice =
+      Math.max(0, Number(item.price) || 0)
+
+    return {
+      product_id:
+        productIdMap.get(externalProductId),
+
+      external_product_id:
+        externalProductId,
+
+      name:
+        item.name || "",
+
+      sku:
+        item.sku || "",
+
+      quantity,
+
+      unit_price:
+        unitPrice,
+
+      total_price:
+        Math.max(0, Number(item.total) || 0)
+    }
+  })
+
+  const orderStatus =
+    mapWooOrderStatus(wooOrder.status)
+
+  const paymentStatus =
+    mapWooPaymentStatus(wooOrder)
+
+  const orderData = {
+    store_id: store._id,
+    source: "woocommerce",
+    external_id: String(wooOrder.id),
+
+    order_number:
+      String(wooOrder.number || wooOrder.id),
+
+    customer_id:
+      customer?._id,
+
+    external_customer_id:
+      wooOrder.customer
+        ? String(wooOrder.customer)
+        : "",
+
+    customer_name:
+      getWooCustomerName(billing),
+
+    customer_email:
+      String(billing.email || "")
+        .trim()
+        .toLowerCase(),
+
+    customer_phone:
+      String(billing.phone || "").trim(),
+
+    customer_address:
+      getWooCustomerAddress(billing),
+
+    items,
+
+    subtotal:
+      Math.max(0, Number(wooOrder.subtotal) || 0),
+
+    total_price:
+      Math.max(0, Number(wooOrder.total) || 0),
+
+    currency:
+      String(wooOrder.currency || "USD").toUpperCase(),
+
+    payment_status: paymentStatus,
+
+    payment_reference:
+      wooOrder.transaction_id || "",
+
+    payment_transaction_id:
+      wooOrder.transaction_id || "",
+
+    payment_gateway:
+      wooOrder.payment_method || "",
+
+    order_status: orderStatus,
+
+    ordered_at:
+      wooOrder.date_created
+        ? new Date(wooOrder.date_created)
+        : new Date()
+  }
+
+  if (wooOrder.date_completed) {
+    orderData.fulfilled_at =
+      new Date(wooOrder.date_completed)
+  }
+
+  if (orderStatus === "cancelled") {
+    orderData.cancelled_at = new Date()
+  }
+
+  const update = {
+    $set: orderData,
+    $unset: {}
+  }
+
+  if (!wooOrder.date_completed) {
+    update.$unset.fulfilled_at = 1
+  }
+
+  if (orderStatus !== "cancelled") {
+    update.$unset.cancelled_at = 1
+  }
+
+  if (!Object.keys(update.$unset).length) {
+    delete update.$unset
+  }
+
+  return Order.findOneAndUpdate(
+    {
+      store_id: store._id,
+      source: "woocommerce",
+      external_id: String(wooOrder.id)
+    },
+    update,
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+      runValidators: true
+    }
+  )
+}
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK
+================================
+
+Endpoint:
+POST /webhooks/woocommerce
+
+Verifies the WooCommerce HMAC
+signature using the exact raw request
+body, then processes product and
+order events.
+================================
+*/
+
+async function woocommerceWebhook(req, res) {
+  try {
+    const rawBody = req.body
+
+    if (!Buffer.isBuffer(rawBody)) {
+      return res.status(400).json({
+        success: false,
+        error: "Raw webhook body is required"
+      })
+    }
+
+    const signature =
+      req.headers["x-wc-webhook-signature"]
+
+    const sourceUrl =
+      req.headers["x-wc-webhook-source"]
+
+    const topic =
+      String(
+        req.headers["x-wc-webhook-topic"] || ""
+      ).toLowerCase()
+
+    if (!signature || !sourceUrl || !topic) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing WooCommerce webhook headers"
+      })
+    }
+
+    /*
+    --------------------------------
+    IDENTIFY CONNECTED STORE
+    --------------------------------
+    */
+
+    const store =
+      await findWooCommerceWebhookStore(sourceUrl)
+
+    if (!store) {
+      console.warn(
+        "WooCommerce webhook source not connected:",
+        sourceUrl
+      )
+
+      return res.status(404).json({
+        success: false,
+        error: "Connected WooCommerce store not found"
+      })
+    }
+
+    /*
+    --------------------------------
+    VERIFY HMAC SIGNATURE
+    --------------------------------
+    */
+
+    const expectedSignature =
+      crypto
+        .createHmac(
+          "sha256",
+          store.woocommerce.webhook_secret
+        )
+        .update(rawBody)
+        .digest("base64")
+
+    const receivedBuffer =
+      Buffer.from(String(signature))
+
+    const expectedBuffer =
+      Buffer.from(expectedSignature)
+
+    if (
+      receivedBuffer.length !== expectedBuffer.length ||
+      !crypto.timingSafeEqual(
+        receivedBuffer,
+        expectedBuffer
+      )
+    ) {
+      console.warn(
+        "Invalid WooCommerce webhook signature:",
+        store._id.toString()
+      )
+
+      return res.status(401).json({
+        success: false,
+        error: "Invalid webhook signature"
+      })
+    }
+
+    /*
+    --------------------------------
+    PARSE VERIFIED PAYLOAD
+    --------------------------------
+    */
+
+    let payload
+
+    try {
+      payload = JSON.parse(rawBody.toString("utf8"))
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid JSON webhook payload"
+      })
+    }
+
+    console.log(
+      "WooCommerce webhook received:",
+      {
+        store: store._id.toString(),
+        topic,
+        resource: req.headers["x-wc-webhook-resource"],
+        id: payload.id
+      }
+    )
+
+    /*
+    --------------------------------
+    PRODUCT CREATED / UPDATED
+    --------------------------------
+    */
+
+    if (
+      topic === "product.created" ||
+      topic === "product.updated"
+    ) {
+      if (!payload.id) {
+        return res.status(400).json({
+          success: false,
+          error: "Product ID is missing"
+        })
+      }
+
+      const result =
+        await syncWooProduct(store, payload.id)
+
+      // Product may have been deleted between
+      // WooCommerce's event and our API fetch.
+      if (result.deleted) {
+        await Product.deleteOne({
+          store_id: store._id,
+          source: "woocommerce",
+          external_id: String(payload.id)
+        })
+      }
+
+      store.woocommerce.last_product_sync =
+        new Date()
+
+      await store.save()
+
+      return res.status(200).json({
+        success: true,
+        processed: true,
+        resource: "product",
+        id: payload.id
+      })
+    }
+
+    /*
+    --------------------------------
+    PRODUCT DELETED
+    --------------------------------
+    */
+
+    if (topic === "product.deleted") {
+      if (!payload.id) {
+        return res.status(400).json({
+          success: false,
+          error: "Product ID is missing"
+        })
+      }
+
+      await Product.deleteOne({
+        store_id: store._id,
+        source: "woocommerce",
+        external_id: String(payload.id)
+      })
+
+      store.woocommerce.last_product_sync =
+        new Date()
+
+      await store.save()
+
+      return res.status(200).json({
+        success: true,
+        processed: true,
+        deleted: true,
+        resource: "product",
+        id: payload.id
+      })
+    }
+
+    /*
+    --------------------------------
+    ORDER CREATED / UPDATED
+    --------------------------------
+    */
+
+    if (
+      topic === "order.created" ||
+      topic === "order.updated"
+    ) {
+      const savedOrder =
+        await syncWooCommerceOrder(store, payload)
+
+      store.woocommerce.last_order_sync =
+        new Date()
+
+      await store.save()
+
+      return res.status(200).json({
+        success: true,
+        processed: true,
+        resource: "order",
+        id: savedOrder.external_id
+      })
+    }
+
+    /*
+    --------------------------------
+    ORDER DELETED
+    --------------------------------
+
+    Preserve historical order data.
+    Mark the order cancelled rather
+    than physically deleting it.
+    --------------------------------
+    */
+
+    if (topic === "order.deleted") {
+      if (!payload.id) {
+        return res.status(400).json({
+          success: false,
+          error: "Order ID is missing"
+        })
+      }
+
+      await Order.findOneAndUpdate(
+        {
+          store_id: store._id,
+          source: "woocommerce",
+          external_id: String(payload.id)
+        },
+        {
+          $set: {
+            order_status: "cancelled",
+            payment_status: "cancelled",
+            cancelled_at: new Date()
+          }
+        },
+        {
+          runValidators: true
+        }
+      )
+
+      store.woocommerce.last_order_sync =
+        new Date()
+
+      await store.save()
+
+      return res.status(200).json({
+        success: true,
+        processed: true,
+        deleted: true,
+        resource: "order",
+        id: payload.id
+      })
+    }
+
+    /*
+    --------------------------------
+    UNKNOWN TOPIC
+    --------------------------------
+
+    Acknowledge unknown topics so
+    WooCommerce does not retry events
+    this endpoint does not support.
+    --------------------------------
+    */
+
+    return res.status(200).json({
+      success: true,
+      processed: false,
+      reason: "Webhook topic not handled",
+      topic
+    })
+
+  } catch (error) {
+    console.error(
+      "WooCommerce webhook processing error:",
+      error.response?.data || error.message || error
+    )
+
+    return res.status(500).json({
+      success: false,
+      error: "WooCommerce webhook processing failed"
+    })
+  }
+}
+
+
+/*
+================================
+EXPORTS
+================================
+*/
+
 module.exports = {
-
   flutterwaveWebhook,
-
+  woocommerceWebhook,
   handleSubscriptionFailure,
-
   handleSubscriptionCancelled
+}
+'@
 
+# Create a timestamped backup before replacing the current controller.
+if (Test-Path $targetPath) {
+    $backupPath = "$targetPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Copy-Item -LiteralPath $targetPath -Destination $backupPath
+    Write-Host "Backup created: $backupPath" -ForegroundColor Yellow
+}
+
+# Write UTF-8 without BOM.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($targetPath, $controllerCode + [Environment]::NewLine, $utf8NoBom)
+
+Write-Host "`nUpdated: $targetPath" -ForegroundColor Green
+
+# Validate the new controller using Node.js.
+Push-Location $projectPath
+try {
+    & node --check ".\controllers\webhookController.js"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Node.js syntax check failed. Your backup is preserved."
+    }
+
+    Write-Host "`nNode.js syntax check passed." -ForegroundColor Green
+
+    # Also verify server.js syntax without modifying it.
+    & node --check ".\server.js"
+    if ($LASTEXITCODE -ne 0) {
+        throw "server.js syntax check failed."
+    }
+
+    Write-Host "server.js syntax check passed." -ForegroundColor Green
+}
+finally {
+    Pop-Location
 }

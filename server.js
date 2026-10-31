@@ -63,6 +63,11 @@ const billingRoutes =
 const webhookRoutes =
   require("./routes/webhookRoutes")
 
+const {
+  woocommerceWebhook
+} =
+  require("./controllers/webhookController")
+
 const integrationRoutes =
   require("./routes/integrationRoutes")
 
@@ -322,6 +327,32 @@ app.use(
       "application/json"
 
   })
+
+)
+
+
+/*
+================================
+WOOCOMMERCE WEBHOOK ROUTE
+================================
+
+This route must be registered after
+the raw-body middleware and before
+express.json() so the controller
+receives the original request Buffer
+for HMAC signature verification.
+
+Endpoint:
+POST /webhooks/woocommerce
+
+================================
+*/
+
+app.post(
+
+  "/webhooks/woocommerce",
+
+  woocommerceWebhook
 
 )
 
