@@ -1,27 +1,11 @@
-$ErrorActionPreference = "Stop"
-
-$projectPath = "C:\Users\Hp laptop\whatsapp-commerce-platform\merchant-platform"
-$targetPath = Join-Path $projectPath "controllers\webhookController.js"
-
-if (-not (Test-Path $projectPath)) {
-    throw "Project directory not found: $projectPath"
-}
-
-$controllerCode = @'
 const crypto = require("crypto")
 
 const Store = require("../models/store")
 const { getPlan } = require("../config/plan")
-
 const Product = require("../models/product")
 const Customer = require("../models/customer")
 const Order = require("../models/order")
-
-const {
-  syncWooProduct
-} = require("../services/woocommerceService")
-
-
+const { syncWooProduct } = require("../services/woocommerceService")
 
 /*
 ================================
@@ -49,662 +33,251 @@ Paystack is NOT used here.
 */
 
 async function flutterwaveWebhook(req, res) {
-
   try {
-
-    /*
-    --------------------------------
-    VERIFY WEBHOOK SECRET
-    --------------------------------
-    */
-
-    const webhookSecret =
-      process.env.FLUTTERWAVE_WEBHOOK_SECRET
-
+    const webhookSecret = process.env.FLUTTERWAVE_WEBHOOK_SECRET
 
     if (!webhookSecret) {
-
-      console.error(
-        "Flutterwave webhook secret is not configured"
-      )
-
+      console.error("Flutterwave webhook secret is not configured")
       return res.status(500).json({
-        error:
-          "Flutterwave webhook secret is not configured"
+        error: "Flutterwave webhook secret is not configured"
       })
-
     }
 
-
-    /*
-    --------------------------------
-    FLUTTERWAVE SIGNATURE
-    --------------------------------
-
-    Flutterwave sends the configured
-    webhook secret through verif-hash.
-    --------------------------------
-    */
-
-    const receivedHash =
-      req.headers["verif-hash"]
-
+    const receivedHash = req.headers["verif-hash"]
 
     if (!receivedHash) {
-
-      console.warn(
-        "Flutterwave webhook missing verif-hash"
-      )
-
+      console.warn("Flutterwave webhook missing verif-hash")
       return res.status(401).json({
-        error:
-          "Invalid webhook signature"
+        error: "Invalid webhook signature"
       })
-
     }
 
+    const receivedBuffer = Buffer.from(String(receivedHash))
+    const expectedBuffer = Buffer.from(String(webhookSecret))
 
-    const receivedBuffer =
-      Buffer.from(
-        String(receivedHash)
-      )
-
-    const expectedBuffer =
-      Buffer.from(
-        String(webhookSecret)
-      )
-
-
-    /*
-    --------------------------------
-    CONSTANT-TIME COMPARISON
-    --------------------------------
-    */
-
-    if (
-      receivedBuffer.length !==
-      expectedBuffer.length
-    ) {
-
+    if (receivedBuffer.length !== expectedBuffer.length) {
       return res.status(401).json({
-        error:
-          "Invalid webhook signature"
+        error: "Invalid webhook signature"
       })
-
     }
 
-
-    if (
-      !crypto.timingSafeEqual(
-        receivedBuffer,
-        expectedBuffer
-      )
-    ) {
-
-      console.warn(
-        "Invalid Flutterwave webhook signature"
-      )
-
+    if (!crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) {
+      console.warn("Invalid Flutterwave webhook signature")
       return res.status(401).json({
-        error:
-          "Invalid webhook signature"
+        error: "Invalid webhook signature"
       })
-
     }
 
-
-    /*
-    --------------------------------
-    WEBHOOK PAYLOAD
-    --------------------------------
-    */
-
-    const event =
-      req.body
-
+    const event = req.body
 
     if (!event) {
-
       return res.status(400).json({
-        error:
-          "Webhook payload is empty"
+        error: "Webhook payload is empty"
       })
-
     }
 
+    const eventType = event.event || event.type || ""
+    const data = event.data || {}
 
-    const eventType =
-      event.event ||
-      event.type ||
-      ""
-
-
-    const data =
-      event.data || {}
-
-
-    const status =
-      String(
-        data.status ||
-        ""
-      ).toLowerCase()
-
+    const status = String(data.status || "").toLowerCase()
 
     const transactionReference =
       data.tx_ref ||
       data.reference ||
       ""
 
+    const transactionId = data.id || null
 
-    const transactionId =
-      data.id ||
-      null
+    console.log("Flutterwave webhook received:", {
+      event: eventType,
+      status,
+      reference: transactionReference,
+      transactionId
+    })
 
-
-    console.log(
-      "Flutterwave webhook received:",
-      {
-        event: eventType,
-        status,
-        reference: transactionReference,
-        transactionId
-      }
-    )
-
-
-    /*
-    --------------------------------
-    ONLY PROCESS SUCCESSFUL PAYMENTS
-    --------------------------------
-    */
-
-    if (
-      status &&
-      status !== "successful"
-    ) {
-
-      console.log(
-        `Flutterwave transaction status: ${status}`
-      )
+    if (status && status !== "successful") {
+      console.log(`Flutterwave transaction status: ${status}`)
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
         status
-
       })
-
     }
-
-
-    /*
-    --------------------------------
-    FIND STORE ID
-    --------------------------------
-
-    Preferred location:
-
-    data.meta.store_id
-
-    Fallback:
-
-    subscription_STOREID_PLAN_CYCLE
-    --------------------------------
-    */
 
     let storeId =
       data.meta?.store_id ||
       data.metadata?.store_id ||
       null
 
-
-    /*
-    --------------------------------
-    PARSE STORE ID FROM REFERENCE
-    --------------------------------
-    */
-
-    if (
-      !storeId &&
-      transactionReference
-    ) {
-
-      const match =
-        transactionReference.match(
-          /subscription_([a-fA-F0-9]{24})/
-        )
-
+    if (!storeId && transactionReference) {
+      const match = transactionReference.match(
+        /subscription_([a-fA-F0-9]{24})/
+      )
 
       if (match) {
-
-        storeId =
-          match[1]
-
+        storeId = match[1]
       }
-
     }
 
-
-    /*
-    --------------------------------
-    STORE ID REQUIRED
-    --------------------------------
-    */
-
     if (!storeId) {
-
       console.warn(
         "Flutterwave webhook does not contain a store ID:",
         transactionReference
       )
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
-        reason:
-          "Store ID not found"
-
+        reason: "Store ID not found"
       })
-
     }
 
-
-    /*
-    --------------------------------
-    FIND STORE
-    --------------------------------
-    */
-
-    const store =
-      await Store.findById(
-        storeId
-      )
-
+    const store = await Store.findById(storeId)
 
     if (!store) {
-
       console.warn(
         "Store not found for Flutterwave webhook:",
         storeId
       )
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
-        reason:
-          "Store not found"
-
+        reason: "Store not found"
       })
-
     }
-
-
-    /*
-    --------------------------------
-    EXTRACT PLAN
-    --------------------------------
-    */
 
     let planName =
       data.meta?.plan ||
       data.metadata?.plan ||
       null
 
-
     let billingCycle =
       data.meta?.billing_cycle ||
       data.metadata?.billing_cycle ||
       null
 
-
-    /*
-    --------------------------------
-    PARSE PLAN FROM REFERENCE
-    --------------------------------
-
-    Expected:
-
-    subscription_STOREID_basic_monthly
-
-    subscription_STOREID_pro_yearly
-    --------------------------------
-    */
-
     if (
       transactionReference &&
-      (
-        !planName ||
-        !billingCycle
-      )
+      (!planName || !billingCycle)
     ) {
-
-      const match =
-        transactionReference.match(
-          /^subscription_[a-fA-F0-9]{24}_(free|basic|pro|premium)_(monthly|yearly)$/
-        )
-
+      const match = transactionReference.match(
+        /^subscription_[a-fA-F0-9]{24}_(free|basic|pro|premium)_(monthly|yearly)$/
+      )
 
       if (match) {
-
-        planName =
-          planName ||
-          match[1]
-
-        billingCycle =
-          billingCycle ||
-          match[2]
-
+        planName = planName || match[1]
+        billingCycle = billingCycle || match[2]
       }
-
     }
 
-
-    /*
-    --------------------------------
-    PLAN REQUIRED
-    --------------------------------
-    */
-
     if (!planName) {
-
       console.warn(
         "Flutterwave webhook missing plan:",
         transactionReference
       )
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
-        reason:
-          "Plan not found"
-
+        reason: "Plan not found"
       })
-
     }
 
+    planName = String(planName).trim().toLowerCase()
 
-    /*
-    --------------------------------
-    NORMALIZE PLAN
-    --------------------------------
-    */
-
-    planName =
-      String(
-        planName
-      )
-        .trim()
-        .toLowerCase()
-
-
-    const plan =
-      getPlan(planName)
-
+    const plan = getPlan(planName)
 
     if (!plan) {
-
-      console.warn(
-        "Invalid plan received:",
-        planName
-      )
+      console.warn("Invalid plan received:", planName)
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
-        reason:
-          "Invalid plan"
-
+        reason: "Invalid plan"
       })
-
     }
 
-
-    /*
-    --------------------------------
-    NORMALIZE BILLING CYCLE
-    --------------------------------
-    */
-
-    billingCycle =
-      String(
-        billingCycle ||
-        "yearly"
-      )
-        .trim()
-        .toLowerCase()
-
+    billingCycle = String(billingCycle || "yearly")
+      .trim()
+      .toLowerCase()
 
     if (
       billingCycle !== "monthly" &&
       billingCycle !== "yearly"
     ) {
-
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
-        reason:
-          "Invalid billing cycle"
-
+        reason: "Invalid billing cycle"
       })
-
     }
-
-
-    /*
-    --------------------------------
-    IDEMPOTENCY
-    --------------------------------
-
-    Prevent processing the same
-    successful transaction twice.
-    --------------------------------
-    */
 
     if (
       transactionReference &&
-      store.flutterwave_subscription_reference ===
-        transactionReference &&
-      store.subscription_status ===
-        "active"
+      store.flutterwave_subscription_reference === transactionReference &&
+      store.subscription_status === "active"
     ) {
-
       console.log(
         "Flutterwave webhook already processed:",
         transactionReference
       )
 
       return res.status(200).json({
-
         received: true,
-
         processed: false,
-
         duplicate: true
-
       })
-
     }
 
+    const renewal = new Date()
 
-    /*
-    --------------------------------
-    CALCULATE RENEWAL DATE
-    --------------------------------
-    */
-
-    const renewal =
-      new Date()
-
-
-    if (
-      billingCycle === "monthly"
-    ) {
-
-      renewal.setMonth(
-        renewal.getMonth() + 1
-      )
-
+    if (billingCycle === "monthly") {
+      renewal.setMonth(renewal.getMonth() + 1)
     } else {
-
-      renewal.setFullYear(
-        renewal.getFullYear() + 1
-      )
-
+      renewal.setFullYear(renewal.getFullYear() + 1)
     }
 
+    store.plan = planName
+    store.subscription_status = "active"
+    store.subscription_renewal = renewal
+    store.billing_grace_until = null
+    store.system_locked = false
 
-    /*
-    --------------------------------
-    UPDATE SUBSCRIPTION
-    --------------------------------
-    */
+    store.monthly_order_limit = plan.monthly_order_limit
+    store.transaction_fee = plan.transaction_fee
 
-    store.plan =
-      planName
-
-
-    store.subscription_status =
-      "active"
-
-
-    store.subscription_renewal =
-      renewal
-
-
-    store.billing_grace_until =
-      null
-
-
-    store.system_locked =
-      false
-
-
-    /*
-    --------------------------------
-    APPLY PLAN CONFIGURATION
-    --------------------------------
-    */
-
-    store.monthly_order_limit =
-      plan.monthly_order_limit
-
-
-    store.transaction_fee =
-      plan.transaction_fee
-
-
-    /*
-    --------------------------------
-    STORE FLUTTERWAVE PAYMENT DATA
-    --------------------------------
-    */
-
-    store.flutterwave_transaction_id =
-      transactionId
-        ? String(transactionId)
-        : undefined
-
+    store.flutterwave_transaction_id = transactionId
+      ? String(transactionId)
+      : undefined
 
     store.flutterwave_subscription_reference =
-      transactionReference ||
-      undefined
+      transactionReference || undefined
 
-
-    store.flutterwave_billing_cycle =
-      billingCycle
-
-
-    store.flutterwave_last_payment_at =
-      new Date()
-
-
-    /*
-    --------------------------------
-    RESET ORDER USAGE
-    --------------------------------
-    */
-
-    store.orders_used =
-      0
-
-
-    /*
-    --------------------------------
-    SAVE STORE
-    --------------------------------
-    */
+    store.flutterwave_billing_cycle = billingCycle
+    store.flutterwave_last_payment_at = new Date()
+    store.orders_used = 0
 
     await store.save()
 
-
-    /*
-    --------------------------------
-    LOG SUCCESS
-    --------------------------------
-    */
-
-    console.log(
-      "Flutterwave subscription activated:",
-      {
-        storeId:
-          store._id.toString(),
-
-        plan:
-          planName,
-
-        billingCycle,
-
-        renewal:
-          renewal.toISOString(),
-
-        transactionReference
-      }
-    )
-
-
-    /*
-    --------------------------------
-    RESPONSE
-    --------------------------------
-    */
+    console.log("Flutterwave subscription activated:", {
+      storeId: store._id.toString(),
+      plan: planName,
+      billingCycle,
+      renewal: renewal.toISOString(),
+      transactionReference
+    })
 
     return res.status(200).json({
-
       received: true,
-
       processed: true,
-
-      plan:
-        planName,
-
-      billing_cycle:
-        billingCycle,
-
-      subscription_status:
-        "active"
-
+      plan: planName,
+      billing_cycle: billingCycle,
+      subscription_status: "active"
     })
 
   } catch (error) {
-
     console.error(
       "Flutterwave webhook error:",
       error.response?.data ||
@@ -712,30 +285,11 @@ async function flutterwaveWebhook(req, res) {
       error
     )
 
-
-    /*
-    --------------------------------
-    RETURN 500
-    --------------------------------
-
-    This allows Flutterwave to retry
-    the webhook when our processing
-    actually fails.
-    --------------------------------
-    */
-
     return res.status(500).json({
-
-      error:
-        "Webhook processing failed"
-
+      error: "Webhook processing failed"
     })
-
   }
-
 }
-
-
 
 /*
 ================================
@@ -748,65 +302,28 @@ payment fails or expires.
 ================================
 */
 
-async function handleSubscriptionFailure(
-  storeId
-) {
-
+async function handleSubscriptionFailure(storeId) {
   if (!storeId) {
-
-    throw new Error(
-      "Store ID is required"
-    )
-
+    throw new Error("Store ID is required")
   }
 
-
-  const store =
-    await Store.findById(
-      storeId
-    )
-
+  const store = await Store.findById(storeId)
 
   if (!store) {
-
-    throw new Error(
-      "Store not found"
-    )
-
+    throw new Error("Store not found")
   }
 
+  store.subscription_status = "past_due"
 
-  store.subscription_status =
-    "past_due"
+  const graceUntil = new Date()
+  graceUntil.setDate(graceUntil.getDate() + 7)
 
-
-  /*
-  --------------------------------
-  BILLING GRACE PERIOD
-  --------------------------------
-  */
-
-  const graceUntil =
-    new Date()
-
-
-  graceUntil.setDate(
-    graceUntil.getDate() + 7
-  )
-
-
-  store.billing_grace_until =
-    graceUntil
-
+  store.billing_grace_until = graceUntil
 
   await store.save()
 
-
   return store
-
 }
-
-
 
 /*
 ================================
@@ -814,58 +331,24 @@ HANDLE SUBSCRIPTION CANCELLATION
 ================================
 */
 
-async function handleSubscriptionCancelled(
-  storeId
-) {
-
+async function handleSubscriptionCancelled(storeId) {
   if (!storeId) {
-
-    throw new Error(
-      "Store ID is required"
-    )
-
+    throw new Error("Store ID is required")
   }
 
-
-  const store =
-    await Store.findById(
-      storeId
-    )
-
+  const store = await Store.findById(storeId)
 
   if (!store) {
-
-    throw new Error(
-      "Store not found"
-    )
-
+    throw new Error("Store not found")
   }
 
-
-  store.subscription_status =
-    "cancelled"
-
-
-  store.billing_grace_until =
-    null
-
+  store.subscription_status = "cancelled"
+  store.billing_grace_until = null
 
   await store.save()
 
-
   return store
-
 }
-
-
-
-/*
-================================
-EXPORTS
-================================
-*/
-
-
 
 /*
 ================================
@@ -877,26 +360,31 @@ function normalizeWebhookStoreUrl(value) {
   try {
     const url = new URL(String(value || "").trim())
 
-    return (
-      url.origin.toLowerCase() +
-      url.pathname.replace(/\/+$/, "").toLowerCase()
-    )
+    return `${url.origin}${url.pathname}`
+      .replace(/\/+$/, "")
+      .toLowerCase()
+
   } catch {
-    return null
+    return ""
   }
 }
 
-
 function getWooCustomerName(billing = {}) {
-  return [
+  const name = [
     billing.first_name,
     billing.last_name
   ]
     .filter(Boolean)
     .join(" ")
     .trim()
-}
 
+  return (
+    name ||
+    billing.company ||
+    billing.email ||
+    "WooCommerce Customer"
+  )
+}
 
 function getWooCustomerAddress(billing = {}) {
   return [
@@ -911,17 +399,18 @@ function getWooCustomerAddress(billing = {}) {
     .join(", ")
 }
 
-
 function mapWooOrderStatus(status) {
   switch (String(status || "").toLowerCase()) {
     case "completed":
       return "completed"
 
     case "processing":
+    case "on-hold":
       return "paid"
 
     case "cancelled":
     case "refunded":
+    case "failed":
       return "cancelled"
 
     default:
@@ -929,13 +418,12 @@ function mapWooOrderStatus(status) {
   }
 }
 
-
-function mapWooPaymentStatus(order) {
+function mapWooPaymentStatus(order = {}) {
   const status = String(order.status || "").toLowerCase()
 
   if (status === "refunded") return "refunded"
-  if (status === "failed") return "failed"
   if (status === "cancelled") return "cancelled"
+  if (status === "failed") return "failed"
 
   if (
     order.date_paid ||
@@ -948,17 +436,9 @@ function mapWooPaymentStatus(order) {
   return "pending"
 }
 
-
 /*
 ================================
 FIND CONNECTED WOOCOMMERCE STORE
-================================
-
-The WooCommerce source header is not
-trusted by itself. It is matched against
-a connected store URL before the HMAC
-signature is checked with that store's
-stored webhook secret.
 ================================
 */
 
@@ -979,15 +459,13 @@ async function findWooCommerceWebhookStore(sourceUrl) {
   })
 
   return stores.find(store => {
-    const storedUrl =
-      normalizeWebhookStoreUrl(
-        store.woocommerce?.store_url
-      )
+    const storedUrl = normalizeWebhookStoreUrl(
+      store.woocommerce?.store_url
+    )
 
     return storedUrl === normalizedSource
   }) || null
 }
-
 
 /*
 ================================
@@ -998,29 +476,33 @@ Guest orders do not create customer
 records. Existing customers are matched
 by WooCommerce customer ID.
 
-The phone fallback avoids violating
-the model's unique store + phone index.
+The phone fallback respects the
+unique store_id + phone index.
 ================================
 */
 
 async function syncWooCommerceCustomer(store, wooOrder) {
   const billing = wooOrder.billing || {}
 
-  const externalCustomerId =
-    wooOrder.customer
-      ? String(wooOrder.customer)
-      : ""
+  const externalCustomerId = wooOrder.customer
+    ? String(wooOrder.customer)
+    : ""
 
-  if (!externalCustomerId) {
+  if (
+    !externalCustomerId ||
+    externalCustomerId === "0"
+  ) {
     return null
   }
+
+  const phone = String(billing.phone || "").trim()
 
   const customerData = {
     name: getWooCustomerName(billing),
     email: String(billing.email || "")
       .trim()
       .toLowerCase(),
-    phone: String(billing.phone || "").trim(),
+    phone,
     last_seen: new Date()
   }
 
@@ -1036,13 +518,10 @@ async function syncWooCommerceCustomer(store, wooOrder) {
     return customer
   }
 
-  // The Customer model has a unique store_id + phone
-  // index. Reuse an existing record rather than
-  // causing a duplicate-key error.
-  if (customerData.phone) {
+  if (phone) {
     customer = await Customer.findOne({
       store_id: store._id,
-      phone: customerData.phone
+      phone
     })
 
     if (customer) {
@@ -1059,7 +538,6 @@ async function syncWooCommerceCustomer(store, wooOrder) {
 
   return customer
 }
-
 
 /*
 ================================
@@ -1081,13 +559,14 @@ async function syncWooCommerceOrder(store, wooOrder) {
 
   const billing = wooOrder.billing || {}
 
-  const customer =
-    await syncWooCommerceCustomer(store, wooOrder)
+  const customer = await syncWooCommerceCustomer(
+    store,
+    wooOrder
+  )
 
-  const wooLineItems =
-    Array.isArray(wooOrder.line_items)
-      ? wooOrder.line_items
-      : []
+  const wooLineItems = Array.isArray(wooOrder.line_items)
+    ? wooOrder.line_items
+    : []
 
   const externalProductIds = [
     ...new Set(
@@ -1113,107 +592,95 @@ async function syncWooCommerceOrder(store, wooOrder) {
   )
 
   const items = wooLineItems.map(item => {
-    const externalProductId =
-      String(item.product_id || "")
+    const externalProductId = String(item.product_id || "")
 
-    const quantity =
-      Math.max(1, Number(item.quantity) || 1)
+    const quantity = Math.max(
+      1,
+      Number(item.quantity) || 1
+    )
 
-    const unitPrice =
-      Math.max(0, Number(item.price) || 0)
+    const unitPrice = Math.max(
+      0,
+      Number(item.price) || 0
+    )
 
     return {
-      product_id:
-        productIdMap.get(externalProductId),
-
-      external_product_id:
-        externalProductId,
-
-      name:
-        item.name || "",
-
-      sku:
-        item.sku || "",
-
+      product_id: productIdMap.get(externalProductId),
+      external_product_id: externalProductId,
+      name: item.name || "",
+      sku: item.sku || "",
       quantity,
-
-      unit_price:
-        unitPrice,
-
-      total_price:
-        Math.max(0, Number(item.total) || 0)
+      unit_price: unitPrice,
+      total_price: Math.max(
+        0,
+        Number(item.total) || 0
+      )
     }
   })
 
-  const orderStatus =
-    mapWooOrderStatus(wooOrder.status)
-
-  const paymentStatus =
-    mapWooPaymentStatus(wooOrder)
+  const orderStatus = mapWooOrderStatus(wooOrder.status)
+  const paymentStatus = mapWooPaymentStatus(wooOrder)
 
   const orderData = {
     store_id: store._id,
     source: "woocommerce",
     external_id: String(wooOrder.id),
 
-    order_number:
-      String(wooOrder.number || wooOrder.id),
+    order_number: String(
+      wooOrder.number || wooOrder.id
+    ),
 
-    customer_id:
-      customer?._id,
+    customer_id: customer?._id,
 
-    external_customer_id:
-      wooOrder.customer
-        ? String(wooOrder.customer)
-        : "",
+    external_customer_id: wooOrder.customer
+      ? String(wooOrder.customer)
+      : "",
 
-    customer_name:
-      getWooCustomerName(billing),
+    customer_name: getWooCustomerName(billing),
 
-    customer_email:
-      String(billing.email || "")
-        .trim()
-        .toLowerCase(),
+    customer_email: String(billing.email || "")
+      .trim()
+      .toLowerCase(),
 
-    customer_phone:
-      String(billing.phone || "").trim(),
+    customer_phone: String(billing.phone || "").trim(),
 
-    customer_address:
-      getWooCustomerAddress(billing),
+    customer_address: getWooCustomerAddress(billing),
 
     items,
 
-    subtotal:
-      Math.max(0, Number(wooOrder.subtotal) || 0),
+    subtotal: Math.max(
+      0,
+      Number(wooOrder.subtotal) || 0
+    ),
 
-    total_price:
-      Math.max(0, Number(wooOrder.total) || 0),
+    total_price: Math.max(
+      0,
+      Number(wooOrder.total) || 0
+    ),
 
-    currency:
-      String(wooOrder.currency || "USD").toUpperCase(),
+    currency: String(
+      wooOrder.currency || "USD"
+    ).toUpperCase(),
 
     payment_status: paymentStatus,
 
-    payment_reference:
-      wooOrder.transaction_id || "",
+    payment_reference: wooOrder.transaction_id || "",
 
-    payment_transaction_id:
-      wooOrder.transaction_id || "",
+    payment_transaction_id: wooOrder.transaction_id || "",
 
-    payment_gateway:
-      wooOrder.payment_method || "",
+    payment_gateway: wooOrder.payment_method || "",
 
     order_status: orderStatus,
 
-    ordered_at:
-      wooOrder.date_created
-        ? new Date(wooOrder.date_created)
-        : new Date()
+    ordered_at: wooOrder.date_created
+      ? new Date(wooOrder.date_created)
+      : new Date()
   }
 
   if (wooOrder.date_completed) {
-    orderData.fulfilled_at =
-      new Date(wooOrder.date_completed)
+    orderData.fulfilled_at = new Date(
+      wooOrder.date_completed
+    )
   }
 
   if (orderStatus === "cancelled") {
@@ -1253,7 +720,6 @@ async function syncWooCommerceOrder(store, wooOrder) {
   )
 }
 
-
 /*
 ================================
 WOOCOMMERCE WEBHOOK
@@ -1286,10 +752,9 @@ async function woocommerceWebhook(req, res) {
     const sourceUrl =
       req.headers["x-wc-webhook-source"]
 
-    const topic =
-      String(
-        req.headers["x-wc-webhook-topic"] || ""
-      ).toLowerCase()
+    const topic = String(
+      req.headers["x-wc-webhook-topic"] || ""
+    ).toLowerCase()
 
     if (!signature || !sourceUrl || !topic) {
       return res.status(400).json({
@@ -1304,8 +769,9 @@ async function woocommerceWebhook(req, res) {
     --------------------------------
     */
 
-    const store =
-      await findWooCommerceWebhookStore(sourceUrl)
+    const store = await findWooCommerceWebhookStore(
+      sourceUrl
+    )
 
     if (!store) {
       console.warn(
@@ -1325,20 +791,21 @@ async function woocommerceWebhook(req, res) {
     --------------------------------
     */
 
-    const expectedSignature =
-      crypto
-        .createHmac(
-          "sha256",
-          store.woocommerce.webhook_secret
-        )
-        .update(rawBody)
-        .digest("base64")
+    const expectedSignature = crypto
+      .createHmac(
+        "sha256",
+        store.woocommerce.webhook_secret
+      )
+      .update(rawBody)
+      .digest("base64")
 
-    const receivedBuffer =
-      Buffer.from(String(signature))
+    const receivedBuffer = Buffer.from(
+      String(signature)
+    )
 
-    const expectedBuffer =
-      Buffer.from(expectedSignature)
+    const expectedBuffer = Buffer.from(
+      expectedSignature
+    )
 
     if (
       receivedBuffer.length !== expectedBuffer.length ||
@@ -1375,15 +842,12 @@ async function woocommerceWebhook(req, res) {
       })
     }
 
-    console.log(
-      "WooCommerce webhook received:",
-      {
-        store: store._id.toString(),
-        topic,
-        resource: req.headers["x-wc-webhook-resource"],
-        id: payload.id
-      }
-    )
+    console.log("WooCommerce webhook received:", {
+      store: store._id.toString(),
+      topic,
+      resource: req.headers["x-wc-webhook-resource"],
+      id: payload.id
+    })
 
     /*
     --------------------------------
@@ -1402,12 +866,12 @@ async function woocommerceWebhook(req, res) {
         })
       }
 
-      const result =
-        await syncWooProduct(store, payload.id)
+      const result = await syncWooProduct(
+        store,
+        payload.id
+      )
 
-      // Product may have been deleted between
-      // WooCommerce's event and our API fetch.
-      if (result.deleted) {
+      if (result?.deleted) {
         await Product.deleteOne({
           store_id: store._id,
           source: "woocommerce",
@@ -1415,9 +879,7 @@ async function woocommerceWebhook(req, res) {
         })
       }
 
-      store.woocommerce.last_product_sync =
-        new Date()
-
+      store.woocommerce.last_product_sync = new Date()
       await store.save()
 
       return res.status(200).json({
@@ -1448,9 +910,7 @@ async function woocommerceWebhook(req, res) {
         external_id: String(payload.id)
       })
 
-      store.woocommerce.last_product_sync =
-        new Date()
-
+      store.woocommerce.last_product_sync = new Date()
       await store.save()
 
       return res.status(200).json({
@@ -1472,12 +932,12 @@ async function woocommerceWebhook(req, res) {
       topic === "order.created" ||
       topic === "order.updated"
     ) {
-      const savedOrder =
-        await syncWooCommerceOrder(store, payload)
+      const savedOrder = await syncWooCommerceOrder(
+        store,
+        payload
+      )
 
-      store.woocommerce.last_order_sync =
-        new Date()
-
+      store.woocommerce.last_order_sync = new Date()
       await store.save()
 
       return res.status(200).json({
@@ -1525,9 +985,7 @@ async function woocommerceWebhook(req, res) {
         }
       )
 
-      store.woocommerce.last_order_sync =
-        new Date()
-
+      store.woocommerce.last_order_sync = new Date()
       await store.save()
 
       return res.status(200).json({
@@ -1560,7 +1018,9 @@ async function woocommerceWebhook(req, res) {
   } catch (error) {
     console.error(
       "WooCommerce webhook processing error:",
-      error.response?.data || error.message || error
+      error.response?.data ||
+      error.message ||
+      error
     )
 
     return res.status(500).json({
@@ -1569,7 +1029,6 @@ async function woocommerceWebhook(req, res) {
     })
   }
 }
-
 
 /*
 ================================
@@ -1582,40 +1041,4 @@ module.exports = {
   woocommerceWebhook,
   handleSubscriptionFailure,
   handleSubscriptionCancelled
-}
-'@
-
-# Create a timestamped backup before replacing the current controller.
-if (Test-Path $targetPath) {
-    $backupPath = "$targetPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Copy-Item -LiteralPath $targetPath -Destination $backupPath
-    Write-Host "Backup created: $backupPath" -ForegroundColor Yellow
-}
-
-# Write UTF-8 without BOM.
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($targetPath, $controllerCode + [Environment]::NewLine, $utf8NoBom)
-
-Write-Host "`nUpdated: $targetPath" -ForegroundColor Green
-
-# Validate the new controller using Node.js.
-Push-Location $projectPath
-try {
-    & node --check ".\controllers\webhookController.js"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Node.js syntax check failed. Your backup is preserved."
-    }
-
-    Write-Host "`nNode.js syntax check passed." -ForegroundColor Green
-
-    # Also verify server.js syntax without modifying it.
-    & node --check ".\server.js"
-    if ($LASTEXITCODE -ne 0) {
-        throw "server.js syntax check failed."
-    }
-
-    Write-Host "server.js syntax check passed." -ForegroundColor Green
-}
-finally {
-    Pop-Location
 }
