@@ -1,211 +1,128 @@
-const crypto = require("crypto")
+const crypto = require("crypto");
 
-
-function customerConversationAuth(
-  req,
-  res,
-  next
-) {
-
-  const secret =
-    process.env.CUSTOMER_CONVERSATION_SECRET
-
+function customerConversationAuth(req, res, next) {
+  const secret = process.env.CUSTOMER_CONVERSATION_SECRET;
 
   if (!secret) {
-
     console.error(
       "CUSTOMER_CONVERSATION_SECRET is not configured"
-    )
+    );
 
     return res.status(500).json({
-
       success: false,
-
-      error:
-        "Conversation service is not configured"
-
-    })
-
+      error: "Conversation service is not configured",
+    });
   }
-
-
-  const providedToken =
-    req.headers[
-      "x-ai-commerce-token"
-    ]
-
-
-  if (!providedToken) {
-
-    return res.status(401).json({
-
-      success: false,
-
-      error:
-        "Conversation token is required"
-
-    })
-
-  }
-
 
   /*
-  --------------------------------
-  SIGNATURE FORMAT
-  --------------------------------
-
-  token =
-  storeId.channel.timestamp.signature
-  --------------------------------
+  |--------------------------------------------------------------------------
+  | READ TOKEN
+  |--------------------------------------------------------------------------
   */
 
-  const parts =
-    providedToken.split(".")
+  const providedToken = req.headers["x-ai-commerce-token"];
 
-
-  if (parts.length !== 4) {
-
+  if (!providedToken || typeof providedToken !== "string") {
     return res.status(401).json({
-
       success: false,
-
-      error:
-        "Invalid conversation token"
-
-    })
-
+      error: "Conversation token is required",
+    });
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | TOKEN FORMAT
+  |--------------------------------------------------------------------------
+  |
+  | storeId.channel.timestamp.signature
+  |
+  */
 
-  const [
-    storeId,
-    channel,
-    timestamp,
-    signature
-  ] = parts
+  const parts = providedToken.split(".");
 
+  if (parts.length !== 4) {
+    return res.status(401).json({
+      success: false,
+      error: "Invalid conversation token",
+    });
+  }
 
-  const timestampNumber =
-    Number(timestamp)
+  const [storeId, channel, timestamp, signature] = parts;
 
+  const timestampNumber = Number(timestamp);
 
   if (
     !storeId ||
-    !channel ||
-    !timestampNumber ||
-    !signature
+    !["shopify", "woocommerce", "custom"].includes(channel) ||
+    !Number.isSafeInteger(timestampNumber) ||
+    timestampNumber <= 0 ||
+    !/^[a-f0-9]{64}$/i.test(signature)
   ) {
-
     return res.status(401).json({
-
       success: false,
-
-      error:
-        "Invalid conversation token"
-
-    })
-
+      error: "Invalid conversation token",
+    });
   }
 
-
   /*
-  --------------------------------
-  TOKEN EXPIRY
-  --------------------------------
+  |--------------------------------------------------------------------------
+  | TOKEN EXPIRATION
+  |--------------------------------------------------------------------------
   */
 
-  const TOKEN_WINDOW =
-    10 * 60 * 1000
-
+  const TOKEN_WINDOW = 10 * 60 * 1000;
 
   if (
-    Math.abs(
-      Date.now() -
-      timestampNumber
-    ) > TOKEN_WINDOW
+    Math.abs(Date.now() - timestampNumber) > TOKEN_WINDOW
   ) {
-
     return res.status(401).json({
-
       success: false,
-
-      error:
-        "Conversation token expired"
-
-    })
-
+      error: "Conversation token expired",
+    });
   }
 
-
   /*
-  --------------------------------
-  VERIFY SIGNATURE
-  --------------------------------
+  |--------------------------------------------------------------------------
+  | VERIFY SIGNATURE
+  |--------------------------------------------------------------------------
   */
 
-  const payload =
-    `${storeId}.${channel}.${timestamp}`
+  const payload = `${storeId}.${channel}.${timestamp}`;
 
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex");
 
-  const expectedSignature =
-    crypto
-      .createHmac(
-        "sha256",
-        secret
-      )
-      .update(payload)
-      .digest("hex")
-
+  const receivedBuffer = Buffer.from(signature, "hex");
+  const expectedBuffer = Buffer.from(expectedSignature, "hex");
 
   const signaturesMatch =
+    receivedBuffer.length === expectedBuffer.length &&
     crypto.timingSafeEqual(
-
-      Buffer.from(
-        signature,
-        "utf8"
-      ),
-
-      Buffer.from(
-        expectedSignature,
-        "utf8"
-      )
-
-    )
-
+      receivedBuffer,
+      expectedBuffer
+    );
 
   if (!signaturesMatch) {
-
     return res.status(401).json({
-
       success: false,
-
-      error:
-        "Invalid conversation token"
-
-    })
-
+      error: "Invalid conversation token",
+    });
   }
 
-
   /*
-  --------------------------------
-  ATTACH TRUSTED CONTEXT
-  --------------------------------
+  |--------------------------------------------------------------------------
+  | ATTACH TRUSTED CONVERSATION CONTEXT
+  |--------------------------------------------------------------------------
   */
 
   req.conversationContext = {
-
     storeId,
+    channel,
+  };
 
-    channel
-
-  }
-
-
-  next()
-
+  return next();
 }
 
-
-module.exports =
-  customerConversationAuth
+module.exports = customerConversationAuth;

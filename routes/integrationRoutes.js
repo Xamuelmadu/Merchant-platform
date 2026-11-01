@@ -1,25 +1,16 @@
-const express = require("express")
+const express = require("express");
 
-const router = express.Router()
+const router = express.Router();
 
-const auth =
-  require("../middleware/auth")
-
-const loadStore =
-  require("../middleware/loadStore")
-
-const integrationController =
-  require("../controllers/integrationController")
-
-const woocommercePluginAuth =
-  require(
-    "../middleware/woocommercePluginAuth"
-  )
+const auth = require("../middleware/auth");
+const loadStore = require("../middleware/loadStore");
+const integrationController = require("../controllers/integrationController");
+const woocommercePluginAuth = require("../middleware/woocommercePluginAuth");
 
 /*
-================================
-PAYMENT SETTINGS
-================================
+|--------------------------------------------------------------------------
+| PAYMENT SETTINGS
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -27,60 +18,68 @@ router.get(
   auth,
   loadStore,
   integrationController.getPayments
-)
+);
 
 router.post(
   "/payments/update",
   auth,
   loadStore,
   integrationController.updatePayments
-)
-
-
+);
 
 /*
-================================
-SHOPIFY STORE RESOLUTION
-================================
+|--------------------------------------------------------------------------
+| SHOPIFY STORE RESOLUTION
+|--------------------------------------------------------------------------
 */
 
 router.get(
   "/shopify/store",
   integrationController.getShopifyStore
-)
-
-
+);
 
 /*
-================================
-SHOPIFY CONNECTION
-================================
+|--------------------------------------------------------------------------
+| SHOPIFY CUSTOMER CONVERSATION TOKEN
+|--------------------------------------------------------------------------
+|
+| Called by the Shopify app server using the internal platform key.
+| The controller resolves the connected store from its Shopify domain
+| and generates a short-lived customer conversation token.
+|
+*/
+
+router.post(
+  "/shopify/conversation-token",
+  integrationController.generateShopifyConversationToken
+);
+
+/*
+|--------------------------------------------------------------------------
+| SHOPIFY CONNECTION
+|--------------------------------------------------------------------------
 */
 
 router.post(
   "/shopify/connect",
   integrationController.connectShopify
-)
-
-
+);
 
 /*
-================================
-SHOPIFY PRODUCT SYNC
-================================
+|--------------------------------------------------------------------------
+| SHOPIFY PRODUCT SYNC
+|--------------------------------------------------------------------------
 */
 
 router.post(
   "/shopify/products/sync",
   integrationController.syncShopifyProductsController
-)
-
-
+);
 
 /*
-================================
-WOOCOMMERCE CONNECTION
-================================
+|--------------------------------------------------------------------------
+| WOOCOMMERCE CONNECTION
+|--------------------------------------------------------------------------
 */
 
 router.post(
@@ -88,14 +87,12 @@ router.post(
   auth,
   loadStore,
   integrationController.connectWooCommerce
-)
-
-
+);
 
 /*
-================================
-WOOCOMMERCE PRODUCT SYNC
-================================
+|--------------------------------------------------------------------------
+| WOOCOMMERCE PRODUCT SYNC
+|--------------------------------------------------------------------------
 */
 
 router.post(
@@ -103,61 +100,51 @@ router.post(
   auth,
   loadStore,
   integrationController.syncWooCommerceProductsController
-)
-
-
+);
 
 /*
-================================
-WOOCOMMERCE PLUGIN TOKEN
-================================
-
-Authenticated merchant requests a
-short-lived installation token.
-================================
+|--------------------------------------------------------------------------
+| WOOCOMMERCE PLUGIN TOKEN
+|--------------------------------------------------------------------------
+|
+| Authenticated merchant requests a short-lived installation token.
+|
 */
 
 router.post(
   "/woocommerce/plugin/token",
   auth,
   integrationController.generateWooCommercePluginToken
-)
-
-
+);
 
 /*
-================================
-WOOCOMMERCE PLUGIN CONNECT
-================================
-
-Called by the WooCommerce plugin
-to connect the store to the merchant.
-================================
+|--------------------------------------------------------------------------
+| WOOCOMMERCE PLUGIN CONNECT
+|--------------------------------------------------------------------------
+|
+| Called by the WooCommerce plugin to connect a store.
+|
 */
 
 router.post(
   "/woocommerce/plugin/connect",
   integrationController.connectWooCommercePlugin
-)
+);
 
 /*
-================================
-WOOCOMMERCE CUSTOMER CONVERSATION TOKEN
-================================
-
-Called by the WooCommerce plugin
-using its persistent plugin credential.
-
-The returned token is short-lived
-and is used for customer chat.
-================================
+|--------------------------------------------------------------------------
+| WOOCOMMERCE CUSTOMER CONVERSATION TOKEN
+|--------------------------------------------------------------------------
+|
+| Authenticated through the persistent WooCommerce plugin credential.
+| Returns a short-lived token for customer conversations.
+|
 */
 
 router.post(
   "/woocommerce/plugin/conversation-token",
   woocommercePluginAuth,
   integrationController.generateWooCommerceConversationToken
-)
+);
 
-
-module.exports = router
+module.exports = router;

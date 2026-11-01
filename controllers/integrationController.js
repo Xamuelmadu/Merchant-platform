@@ -944,6 +944,119 @@ async function syncWooCommerceProductsController(
 }
 
 /*
+|--------------------------------------------------------------------------
+| SHOPIFY CUSTOMER CONVERSATION TOKEN
+|--------------------------------------------------------------------------
+|
+| Called by the Shopify app server using the internal platform key.
+|
+| The Shopify store is resolved using its verified shop domain.
+| The store ID is never accepted from the storefront.
+|
+| Returns a short-lived customer conversation token.
+|
+*/
+
+async function generateShopifyConversationToken(req, res) {
+  try {
+    /*
+    |--------------------------------------------------------------------------
+    | INTERNAL PLATFORM AUTHENTICATION
+    |--------------------------------------------------------------------------
+    */
+
+    const platformKey = req.headers["x-platform-key"];
+
+    if (
+      !process.env.AI_COMMERCE_PLATFORM_KEY ||
+      platformKey !== process.env.AI_COMMERCE_PLATFORM_KEY
+    ) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized platform request",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SHOPIFY DOMAIN
+    |--------------------------------------------------------------------------
+    */
+
+    const shopDomain = String(req.body?.shop || "")
+      .trim()
+      .toLowerCase();
+
+    if (!shopDomain) {
+      return res.status(400).json({
+        success: false,
+        error: "Shop domain is required",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | FIND CONNECTED SHOPIFY STORE
+    |--------------------------------------------------------------------------
+    */
+
+    const store = await Store.findOne({
+      "shopify.shop_domain": shopDomain,
+      platform: "shopify",
+      platform_connected: true,
+      "shopify.connected": true,
+    });
+
+    if (!store) {
+      return res.status(404).json({
+        success: false,
+        error: "Connected Shopify store not found",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GENERATE CUSTOMER CONVERSATION TOKEN
+    |--------------------------------------------------------------------------
+    */
+
+    const token = createCustomerConversationToken({
+      storeId: String(store._id),
+      channel: "shopify",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | TOKEN EXPIRATION
+    |--------------------------------------------------------------------------
+    |
+    | customerConversationAuth accepts tokens for 10 minutes.
+    |
+    */
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    return res.json({
+      success: true,
+      token,
+      expires_at: expiresAt,
+      store_id: String(store._id),
+      channel: "shopify",
+    });
+  } catch (error) {
+    console.error(
+      "Generate Shopify conversation token error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "Failed to generate Shopify conversation token",
+    });
+  }
+}
+
+/*
 ================================
 GENERATE WOOCOMMERCE PLUGIN TOKEN
 ================================
@@ -1759,12 +1872,15 @@ EXPORTS
 module.exports = {
   getPayments,
   updatePayments,
+
   connectShopify,
   getShopifyStore,
   syncShopifyProductsController,
+  generateShopifyConversationToken,
+
   generateWooCommerceConversationToken,
   connectWooCommerce,
   syncWooCommerceProductsController,
   generateWooCommercePluginToken,
-  connectWooCommercePlugin
-}
+  connectWooCommercePlugin,
+};
