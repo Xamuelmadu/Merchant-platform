@@ -8,7 +8,8 @@ const flutterwaveService =
   require("../services/flutterwaveService")
 
 const {
-  getPlan
+  getPlan,
+  getPlanPrice
 } = require("../config/plan")
 
 
@@ -585,64 +586,24 @@ async function upgradePlan(req, res) {
     }
 
 
-    /*
-    --------------------------------
-    GET CORRECT PRICE
-    --------------------------------
+   /*
+--------------------------------
+GET CORRECT PRICE
+--------------------------------
+*/
 
-    Plan configuration supports
-    monthly and yearly pricing.
+const amount = Number(
+  getPlanPrice(plan, cycle)
+)
 
-    Example:
-
-    plan.price.monthly
-    plan.price.yearly
-    --------------------------------
-    */
-
-    let amount
-
-
-    if (
-      typeof planConfig.price === "object"
-    ) {
-
-      amount =
-        Number(
-          planConfig.price[cycle]
-        )
-
-    } else {
-
-      /*
-      Backward compatibility.
-
-      If an older plan configuration
-      contains a single numeric price,
-      use that value.
-      */
-
-      amount =
-        Number(
-          planConfig.price
-        )
-
-    }
-
-
-    if (
-      !Number.isFinite(amount) ||
-      amount <= 0
-    ) {
-
-      return res.status(400).json({
-
-        error:
-          "Invalid subscription price"
-
-      })
-
-    }
+if (
+  !Number.isFinite(amount) ||
+  amount <= 0
+) {
+  return res.status(400).json({
+    error: "Invalid subscription price"
+  })
+}
 
 
     /*
