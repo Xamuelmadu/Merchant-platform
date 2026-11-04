@@ -1,146 +1,192 @@
-const crypto = require("crypto")
-
-const Store = require("../models/store")
-const { getPlan } = require("../config/plan")
 const Product = require("../models/product")
 const Customer = require("../models/customer")
 const Order = require("../models/order")
 const { syncWooProduct } = require("../services/woocommerceService")
 
-/*
-================================
-FLUTTERWAVE WEBHOOK
-================================
 
-Handles Flutterwave events related
-to Merchant Platform subscriptions.
+const axios = require("axios")
+const crypto = require("crypto")
 
-IMPORTANT:
-
-This webhook is ONLY for platform
-subscription billing.
-
-Merchant customer checkout does NOT
-run through this webhook.
-
-Shopify customers use Shopify checkout.
-
-WooCommerce customers use WooCommerce
-checkout.
-
-Paystack is NOT used here.
-================================
-*/
+const Store = require("../models/store")
+const { getPlan, getPlanPrice } = require("../config/plan")
 
 async function flutterwaveWebhook(req, res) {
   try {
+    // --------------------------------
+    // 1. VALIDATE WEBHOOK SIGNATURE
+    // --------------------------------
+
     const webhookSecret = process.env.FLUTTERWAVE_WEBHOOK_SECRET
+    const receivedHash = req.headers["verif-hash"]
 
     if (!webhookSecret) {
-      console.error("Flutterwave webhook secret is not configured")
+      console.error("FLUTTERWAVE_WEBHOOK_SECRET is not configured")
       return res.status(500).json({
-        error: "Flutterwave webhook secret is not configured"
+        error: "Webhook secret is not configured"
       })
     }
 
-    const receivedHash = req.headers["verif-hash"]
-
     if (!receivedHash) {
-      console.warn("Flutterwave webhook missing verif-hash")
       return res.status(401).json({
-        error: "Invalid webhook signature"
+        error: "Missing webhook signature"
       })
     }
 
     const receivedBuffer = Buffer.from(String(receivedHash))
     const expectedBuffer = Buffer.from(String(webhookSecret))
 
-    if (receivedBuffer.length !== expectedBuffer.length) {
+    if (
+      receivedBuffer.length !== expectedBuffer.length ||
+      !crypto.timingSafeEqual(receivedBuffer, expectedBuffer)
+    ) {
       return res.status(401).json({
         error: "Invalid webhook signature"
       })
     }
 
-    if (!crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) {
-      console.warn("Invalid Flutterwave webhook signature")
-      return res.status(401).json({
-        error: "Invalid webhook signature"
-      })
-    }
+    // --------------------------------
+    // 2. VALIDATE PAYLOAD
+    // --------------------------------
 
     const event = req.body
 
-    if (!event) {
+    if (!event || typeof event !== "object") {
       return res.status(400).json({
-        error: "Webhook payload is empty"
+        error: "Invalid webhook payload"
       })
     }
 
-    const eventType = event.event || event.type || ""
     const data = event.data || {}
+    const eventType = event.event || event.type || ""
 
-    const status = String(data.status || "").toLowerCase()
+    const eventStatus = String(data.status || "").toLowerCase()
 
-    const transactionReference =
-      data.tx_ref ||
-      data.reference ||
-      ""
-
-    const transactionId = data.id || null
+    const transactionId = data.id
+    const transactionReference = String(
+      data.tx_ref || data.reference || ""
+    ).trim()
 
     console.log("Flutterwave webhook received:", {
       event: eventType,
-      status,
+      status: eventStatus,
       reference: transactionReference,
       transactionId
     })
 
-    if (status && status !== "successful") {
-      console.log(`Flutterwave transaction status: ${status}`)
-
+    // Only successful transactions can activate subscriptions.
+    if (eventStatus !== "successful") {
       return res.status(200).json({
         received: true,
         processed: false,
-        status
+        reason: "Transaction is not successful"
       })
     }
 
-    let storeId =
-      data.meta?.store_id ||
-      data.metadata?.store_id ||
-      null
-
-    if (!storeId && transactionReference) {
-      const match = transactionReference.match(
-        /subscription_([a-fA-F0-9]{24})/
-      )
-
-      if (match) {
-        storeId = match[1]
-      }
+    if (!transactionId || !transactionReference) {
+      return res.status(400).json({
+        error: "Transaction ID or reference is missing"
+      })
     }
 
-    if (!storeId) {
-      console.warn(
-        "Flutterwave webhook does not contain a store ID:",
+    // --------------------------------
+    // 3. VERIFY TRANSACTION WITH FLW
+    // --------------------------------
+
+    const flutterwaveSecret = process.env.FLUTTERWAVE_SECRET_KEY
+
+    if (!flutterwaveSecret) {
+      console.error("FLUTTERWAVE_SECRET_KEY is not configured")
+      return res.status(500).json({
+        error: "Flutterwave secret key is not configured"
+      })
+    }
+
+    const verificationResponse = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(
+        transactionId
+      )}/verify`,
+      {
+        headers: {
+          Authorization: `Bearer ${flutterwaveSecret}`,
+          Accept: "application/json"
+        },
+        timeout: 15000
+      }
+    )
+
+    const verified = verificationResponse.data?.data
+
+    if (
+      verificationResponse.data?.status !== "success" ||
+      !verified
+    ) {
+      return res.status(400).json({
+        error: "Flutterwave transaction verification failed"
+      })
+    }
+
+    const verifiedStatus = String(
+      verified.status || ""
+    ).toLowerCase()
+
+    const verifiedReference = String(
+      verified.tx_ref || ""
+    ).trim()
+
+    if (verifiedStatus !== "successful") {
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: "Verified transaction is not successful"
+      })
+    }
+
+    if (verifiedReference !== transactionReference) {
+      console.error("Flutterwave transaction reference mismatch")
+
+      return res.status(400).json({
+        error: "Transaction reference mismatch"
+      })
+    }
+
+    // --------------------------------
+    // 4. IDENTIFY SUBSCRIPTION
+    // --------------------------------
+
+    // Expected reference:
+    // subscription_STOREID_PLAN_BILLINGCYCLE
+    //
+    // Example:
+    // subscription_64abcdef1234567890123456_pro_monthly
+
+    const referenceMatch = transactionReference.match(
+      /^subscription_([a-fA-F0-9]{24})_(basic|pro|premium)_(monthly|yearly)$/
+    )
+
+    if (!referenceMatch) {
+      console.log(
+        "Ignoring non-subscription Flutterwave transaction:",
         transactionReference
       )
 
       return res.status(200).json({
         received: true,
         processed: false,
-        reason: "Store ID not found"
+        reason: "Not a platform subscription transaction"
       })
     }
+
+    const storeId = referenceMatch[1]
+    const planName = referenceMatch[2].toLowerCase()
+    const billingCycle = referenceMatch[3].toLowerCase()
+
+    // --------------------------------
+    // 5. LOAD STORE AND PLAN
+    // --------------------------------
 
     const store = await Store.findById(storeId)
 
     if (!store) {
-      console.warn(
-        "Store not found for Flutterwave webhook:",
-        storeId
-      )
-
       return res.status(200).json({
         received: true,
         processed: false,
@@ -148,82 +194,78 @@ async function flutterwaveWebhook(req, res) {
       })
     }
 
-    let planName =
-      data.meta?.plan ||
-      data.metadata?.plan ||
-      null
-
-    let billingCycle =
-      data.meta?.billing_cycle ||
-      data.metadata?.billing_cycle ||
-      null
-
-    if (
-      transactionReference &&
-      (!planName || !billingCycle)
-    ) {
-      const match = transactionReference.match(
-        /^subscription_[a-fA-F0-9]{24}_(free|basic|pro|premium)_(monthly|yearly)$/
-      )
-
-      if (match) {
-        planName = planName || match[1]
-        billingCycle = billingCycle || match[2]
-      }
-    }
-
-    if (!planName) {
-      console.warn(
-        "Flutterwave webhook missing plan:",
-        transactionReference
-      )
-
-      return res.status(200).json({
-        received: true,
-        processed: false,
-        reason: "Plan not found"
-      })
-    }
-
-    planName = String(planName).trim().toLowerCase()
-
     const plan = getPlan(planName)
 
-    if (!plan) {
-      console.warn("Invalid plan received:", planName)
-
-      return res.status(200).json({
-        received: true,
-        processed: false,
-        reason: "Invalid plan"
-      })
-    }
-
-    billingCycle = String(billingCycle || "yearly")
-      .trim()
-      .toLowerCase()
-
     if (
-      billingCycle !== "monthly" &&
-      billingCycle !== "yearly"
+      !plan ||
+      String(plan.name || "").toLowerCase() !== planName
     ) {
-      return res.status(200).json({
-        received: true,
-        processed: false,
-        reason: "Invalid billing cycle"
+      return res.status(400).json({
+        error: "Invalid subscription plan"
       })
     }
 
+    const expectedAmount = Number(
+      getPlanPrice(planName, billingCycle)
+    )
+
+    if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) {
+      return res.status(400).json({
+        error: "Invalid subscription price configuration"
+      })
+    }
+
+    // --------------------------------
+    // 6. VALIDATE AMOUNT AND CURRENCY
+    // --------------------------------
+
+    const expectedCurrency = String(
+      process.env.FLUTTERWAVE_CURRENCY || "USD"
+    ).toUpperCase()
+
+    const verifiedCurrency = String(
+      verified.currency || ""
+    ).toUpperCase()
+
+    const verifiedAmount = Number(verified.amount)
+
+    if (verifiedCurrency !== expectedCurrency) {
+      console.error("Subscription currency mismatch:", {
+        expectedCurrency,
+        verifiedCurrency
+      })
+
+      return res.status(400).json({
+        error: "Subscription currency mismatch"
+      })
+    }
+
+    // Allow only a tiny floating-point tolerance.
     if (
-      transactionReference &&
-      store.flutterwave_subscription_reference === transactionReference &&
+      !Number.isFinite(verifiedAmount) ||
+      Math.abs(verifiedAmount - expectedAmount) > 0.01
+    ) {
+      console.error("Subscription amount mismatch:", {
+        expectedAmount,
+        verifiedAmount
+      })
+
+      return res.status(400).json({
+        error: "Subscription payment amount mismatch"
+      })
+    }
+
+    // --------------------------------
+    // 7. IDEMPOTENCY / DUPLICATE CHECK
+    // --------------------------------
+
+    if (
+      String(store.flutterwave_subscription_reference || "") ===
+        transactionReference &&
+      String(store.flutterwave_transaction_id || "") ===
+        String(transactionId) &&
       store.subscription_status === "active"
     ) {
-      console.log(
-        "Flutterwave webhook already processed:",
-        transactionReference
-      )
-
       return res.status(200).json({
         received: true,
         processed: false,
@@ -231,7 +273,12 @@ async function flutterwaveWebhook(req, res) {
       })
     }
 
-    const renewal = new Date()
+    // --------------------------------
+    // 8. CALCULATE RENEWAL DATE
+    // --------------------------------
+
+    const now = new Date()
+    const renewal = new Date(now)
 
     if (billingCycle === "monthly") {
       renewal.setMonth(renewal.getMonth() + 1)
@@ -239,34 +286,37 @@ async function flutterwaveWebhook(req, res) {
       renewal.setFullYear(renewal.getFullYear() + 1)
     }
 
+    // --------------------------------
+    // 9. ACTIVATE SUBSCRIPTION
+    // --------------------------------
+
     store.plan = planName
     store.subscription_status = "active"
     store.subscription_renewal = renewal
+
     store.billing_grace_until = null
     store.system_locked = false
 
     store.monthly_order_limit = plan.monthly_order_limit
     store.transaction_fee = plan.transaction_fee
 
-    store.flutterwave_transaction_id = transactionId
-      ? String(transactionId)
-      : undefined
-
-    store.flutterwave_subscription_reference =
-      transactionReference || undefined
-
+    store.flutterwave_transaction_id = String(transactionId)
+    store.flutterwave_subscription_reference = transactionReference
     store.flutterwave_billing_cycle = billingCycle
-    store.flutterwave_last_payment_at = new Date()
+    store.flutterwave_last_payment_at = now
+
     store.orders_used = 0
 
     await store.save()
 
     console.log("Flutterwave subscription activated:", {
-      storeId: store._id.toString(),
+      storeId: String(store._id),
       plan: planName,
       billingCycle,
-      renewal: renewal.toISOString(),
-      transactionReference
+      amount: verifiedAmount,
+      currency: verifiedCurrency,
+      transactionReference,
+      renewal: renewal.toISOString()
     })
 
     return res.status(200).json({
@@ -280,9 +330,7 @@ async function flutterwaveWebhook(req, res) {
   } catch (error) {
     console.error(
       "Flutterwave webhook error:",
-      error.response?.data ||
-      error.message ||
-      error
+      error.response?.data || error.message || error
     )
 
     return res.status(500).json({
@@ -290,6 +338,7 @@ async function flutterwaveWebhook(req, res) {
     })
   }
 }
+
 
 /*
 ================================
