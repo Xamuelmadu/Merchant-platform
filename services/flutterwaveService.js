@@ -155,7 +155,7 @@ async function createFlutterwavePayment(
           headers: {
 
             Authorization:
-              `Bearer ${process.env.FLUTTERWAVE_SECRET}`,
+  `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
 
             "Content-Type":
               "application/json"
