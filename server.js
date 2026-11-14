@@ -74,6 +74,9 @@ const integrationRoutes =
 const conversationRoutes =
   require("./routes/conversationRoutes")
 
+const marketingRoutes =
+  require("./routes/marketingRoutes")
+
 
 /*
 ================================
@@ -620,6 +623,17 @@ app.use(
 
 )
 
+/*
+================================
+MARKETING EMAIL ROUTES
+================================
+*/
+
+app.use(
+  "/api/marketing",
+  marketingRoutes
+)
+
 
 /*
 ================================
@@ -746,6 +760,19 @@ async function startServer() {
     console.log(
       "✅ Database connected"
     )
+
+    /*
+================================
+START MARKETING EMAIL SEQUENCE
+================================
+*/
+
+require("./cron/marketingEmailCron")
+  .startMarketingEmailCron()
+
+console.log(
+  "📧 Marketing email sequence initialized"
+)
 
 
     /*
