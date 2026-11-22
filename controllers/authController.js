@@ -12,6 +12,10 @@ const emailService =
 const ShopifyAuthHandoff =
   require("../models/shopifyAuthHandoff")
 
+const {
+  enrollMarketingSubscriber,
+} = require("../services/marketingEmailService");
+
 const WooCommerceAuthHandoff = require("../models/woocommerceAuthHandoff");
 const IntegrationToken = require("../models/integrationToken");
 const ShopifyPendingInstallation = require("../models/shopifyPendingInstallation");
@@ -2247,6 +2251,41 @@ async function sendOtp(
 
     }
 
+    /*
+|--------------------------------------------------------------------------
+| OPTIONAL PRODUCT EDUCATION ENROLMENT
+|--------------------------------------------------------------------------
+|
+| Only newly registered merchants who explicitly opted in
+| are enrolled. Existing sign-ins are never enrolled here.
+|
+*/
+
+if (
+  newlyRegistered &&
+  req.body.marketing_consent === true
+) {
+  try {
+    await enrollMarketingSubscriber({
+      email: user.email,
+      name: user.name,
+      source: pendingShopifyInstallation
+        ? "shopify-registration"
+        : "merchant-registration",
+    });
+
+    console.log(
+      `[Marketing] ${user.email} enrolled in product education.`
+    );
+  } catch (marketingError) {
+    // Marketing failure must never invalidate account registration.
+    console.error(
+      "[Marketing] Registration enrolment failed:",
+      marketingError.message
+    );
+  }
+}
+
 
     /*
     --------------------------------
@@ -2432,6 +2471,7 @@ async function verifyOtp(
 
     let pendingShopifyInstallation = null;
     let preferredStoreId = null;
+    let newlyRegistered = false;
 
     /*
     --------------------------------
@@ -2819,6 +2859,7 @@ async function verifyOtp(
             "free"
 
         })
+        newlyRegistered = true;
       if (pendingShopifyInstallation) {
         let consumedInstallation = null;
 
