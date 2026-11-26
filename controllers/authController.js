@@ -2251,40 +2251,6 @@ async function sendOtp(
 
     }
 
-    /*
-|--------------------------------------------------------------------------
-| OPTIONAL PRODUCT EDUCATION ENROLMENT
-|--------------------------------------------------------------------------
-|
-| Only newly registered merchants who explicitly opted in
-| are enrolled. Existing sign-ins are never enrolled here.
-|
-*/
-
-if (
-  newlyRegistered &&
-  req.body.marketing_consent === true
-) {
-  try {
-    await enrollMarketingSubscriber({
-      email: user.email,
-      name: user.name,
-      source: pendingShopifyInstallation
-        ? "shopify-registration"
-        : "merchant-registration",
-    });
-
-    console.log(
-      `[Marketing] ${user.email} enrolled in product education.`
-    );
-  } catch (marketingError) {
-    // Marketing failure must never invalidate account registration.
-    console.error(
-      "[Marketing] Registration enrolment failed:",
-      marketingError.message
-    );
-  }
-}
 
 
     /*
@@ -2963,6 +2929,40 @@ async function verifyOtp(
         }
       }
 
+    /*
+|--------------------------------------------------------------------------
+| OPTIONAL PRODUCT EDUCATION ENROLMENT
+|--------------------------------------------------------------------------
+|
+| Only newly registered merchants who explicitly opted in
+| are enrolled. Existing sign-ins are never enrolled here.
+|
+*/
+
+if (
+  newlyRegistered &&
+  req.body.marketing_consent === true
+) {
+  try {
+    await enrollMarketingSubscriber({
+      email: user.email,
+      name: user.name,
+      source: pendingShopifyInstallation
+        ? "shopify-registration"
+        : "merchant-registration",
+    });
+
+    console.log(
+      `[Marketing] ${user.email} enrolled in product education.`
+    );
+  } catch (marketingError) {
+    // Marketing failure must never invalidate account registration.
+    console.error(
+      "[Marketing] Registration enrolment failed:",
+      marketingError.message
+    );
+  }
+}
     }
 
 
