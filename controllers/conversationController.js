@@ -1,19 +1,69 @@
-const Store =
-  require("../models/store")
+const Store = require("../models/store")
 
 const {
   sendConversationToEngine
-} =
-  require("../services/aiEngineService")
+} = require("../services/aiEngineService")
+
+const {
+  reserveConversationCredit
+} = require("../services/aiEntitlementService")
+
+const SUPPORTED_CHANNELS = [
+  "shopify",
+  "woocommerce",
+  "custom"
+]
 
 
 /*
 ================================
-CUSTOMER CONVERSATION
+CONVERSATION ERROR HANDLER
 ================================
+*/
 
-Authenticated/internal conversation
-endpoint.
+function handleConversationError(
+  res,
+  error,
+  logLabel
+) {
+  console.error(
+    logLabel,
+    error.message
+  )
+
+  // Preserve entitlement and application errors.
+  if (error.status) {
+    return res.status(error.status).json({
+      success: false,
+      error: error.message,
+      ...(error.code ? { code: error.code } : {})
+    })
+  }
+
+  // Preserve AI engine HTTP errors.
+  const engineStatus =
+    error.response?.status
+
+  if (engineStatus) {
+    return res.status(engineStatus).json({
+      success: false,
+      error:
+        error.response?.data?.error ||
+        "AI engine request failed"
+    })
+  }
+
+  return res.status(500).json({
+    success: false,
+    error: "Unable to process conversation"
+  })
+}
+
+
+/*
+================================
+AUTHENTICATED CONVERSATION
+================================
 
 Used by:
 - Shopify
@@ -23,25 +73,14 @@ Used by:
 ================================
 */
 
-async function handleConversation(
-  req,
-  res
-) {
-
+async function handleConversation(req, res) {
   try {
-
     const {
-
       store_id,
-
       channel,
-
       customer,
-
       message
-
     } = req.body
-
 
     /*
     --------------------------------
@@ -50,117 +89,60 @@ async function handleConversation(
     */
 
     if (!store_id) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "store_id is required"
-
+        error: "store_id is required"
       })
-
     }
-
 
     if (!channel) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "channel is required"
-
+        error: "channel is required"
       })
-
     }
 
-
-    if (
-      ![
-        "shopify",
-        "woocommerce",
-        "custom"
-      ].includes(channel)
-    ) {
-
+    if (!SUPPORTED_CHANNELS.includes(channel)) {
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Unsupported channel"
-
+        error: "Unsupported channel"
       })
-
     }
 
-
-    if (
-      !customer?.external_id
-    ) {
-
+    if (!customer?.external_id) {
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "customer.external_id is required"
-
+        error: "customer.external_id is required"
       })
-
     }
 
-
     if (
-      !message ||
+      typeof message !== "string" ||
       !message.trim()
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "message is required"
-
+        error: "message is required"
       })
-
     }
-
 
     /*
     --------------------------------
-    LOAD STORE
+    LOAD MERCHANT STORE
     --------------------------------
     */
 
-    const store =
-      await Store.findOne({
-
-        _id:
-          store_id,
-
-        merchant_id:
-          req.user.id
-
-      })
-
+    const store = await Store.findOne({
+      _id: store_id,
+      merchant_id: req.user.id
+    })
 
     if (!store) {
-
       return res.status(404).json({
-
         success: false,
-
-        error:
-          "Store not found"
-
+        error: "Store not found"
       })
-
     }
-
 
     /*
     --------------------------------
@@ -176,18 +158,11 @@ async function handleConversation(
         !store.shopify?.connected
       )
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Shopify store is not connected"
-
+        error: "Shopify store is not connected"
       })
-
     }
-
 
     if (
       channel === "woocommerce" &&
@@ -197,18 +172,23 @@ async function handleConversation(
         !store.woocommerce?.connected
       )
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "WooCommerce store is not connected"
-
+        error: "WooCommerce store is not connected"
       })
-
     }
 
+    /*
+    --------------------------------
+    SUBSCRIPTION ENTITLEMENT
+    --------------------------------
+
+    Active paid subscription for this
+    store OR active registration trial.
+    --------------------------------
+    */
+
+    await reserveConversationCredit(store)
 
     /*
     --------------------------------
@@ -216,40 +196,20 @@ async function handleConversation(
     --------------------------------
     */
 
-    const result =
-      await sendConversationToEngine({
+    const result = await sendConversationToEngine({
+      store: store.toObject(),
 
-        store:
-          store.toObject(),
+      channel,
 
-        channel,
+      customer: {
+        external_id: String(customer.external_id),
+        name: customer.name || null,
+        email: customer.email || null,
+        phone: customer.phone || null
+      },
 
-        customer: {
-
-          external_id:
-            String(
-              customer.external_id
-            ),
-
-          name:
-            customer.name ||
-            null,
-
-          email:
-            customer.email ||
-            null,
-
-          phone:
-            customer.phone ||
-            null
-
-        },
-
-        message:
-          message.trim()
-
-      })
-
+      message: message.trim()
+    })
 
     /*
     --------------------------------
@@ -258,65 +218,17 @@ async function handleConversation(
     */
 
     return res.status(200).json({
-
-      success:
-        true,
-
+      success: true,
       ...result
-
     })
-
 
   } catch (error) {
-
-    console.error(
-      "Conversation controller error:",
-      error.message
+    return handleConversationError(
+      res,
+      error,
+      "Conversation controller error:"
     )
-
-
-    /*
-    --------------------------------
-    ENGINE ERROR
-    --------------------------------
-    */
-
-    const status =
-      error.response?.status
-
-
-    if (status) {
-
-      return res.status(status).json({
-
-        success: false,
-
-        error:
-          error.response?.data?.error ||
-          "AI engine request failed"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    GENERAL ERROR
-    --------------------------------
-    */
-
-    return res.status(500).json({
-
-      success: false,
-
-      error:
-        "Unable to process conversation"
-
-    })
-
   }
-
 }
 
 
@@ -333,21 +245,12 @@ This does NOT require req.user.
 ================================
 */
 
-async function handleCustomerConversation(
-  req,
-  res
-) {
-
+async function handleCustomerConversation(req, res) {
   try {
-
     const {
-
       customer,
-
       message
-
     } = req.body
-
 
     /*
     --------------------------------
@@ -356,14 +259,9 @@ async function handleCustomerConversation(
     */
 
     const {
-
       storeId,
-
       channel
-
-    } =
-      req.conversationContext || {}
-
+    } = req.conversationContext || {}
 
     /*
     --------------------------------
@@ -372,85 +270,42 @@ async function handleCustomerConversation(
     */
 
     if (!storeId) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Conversation store context is missing"
-
+        error: "Conversation store context is missing"
       })
-
     }
-
 
     if (!channel) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Conversation channel is missing"
-
+        error: "Conversation channel is missing"
       })
-
     }
 
-
-    if (
-      ![
-        "shopify",
-        "woocommerce",
-        "custom"
-      ].includes(channel)
-    ) {
-
+    if (!SUPPORTED_CHANNELS.includes(channel)) {
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Unsupported conversation channel"
-
+        error: "Unsupported conversation channel"
       })
-
     }
 
-
-    if (
-      !customer?.external_id
-    ) {
-
+    if (!customer?.external_id) {
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "customer.external_id is required"
-
+        error: "customer.external_id is required"
       })
-
     }
 
-
     if (
-      !message ||
+      typeof message !== "string" ||
       !message.trim()
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "message is required"
-
+        error: "message is required"
       })
-
     }
-
 
     /*
     --------------------------------
@@ -458,34 +313,18 @@ async function handleCustomerConversation(
     --------------------------------
     */
 
-    const store =
-      await Store.findOne({
-
-        _id:
-          storeId,
-
-        platform:
-          channel,
-
-        platform_connected:
-          true
-
-      })
-
+    const store = await Store.findOne({
+      _id: storeId,
+      platform: channel,
+      platform_connected: true
+    })
 
     if (!store) {
-
       return res.status(404).json({
-
         success: false,
-
-        error:
-          "Connected store not found"
-
+        error: "Connected store not found"
       })
-
     }
-
 
     /*
     --------------------------------
@@ -497,35 +336,29 @@ async function handleCustomerConversation(
       channel === "shopify" &&
       !store.shopify?.connected
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "Shopify store is not connected"
-
+        error: "Shopify store is not connected"
       })
-
     }
-
 
     if (
       channel === "woocommerce" &&
       !store.woocommerce?.connected
     ) {
-
       return res.status(400).json({
-
         success: false,
-
-        error:
-          "WooCommerce store is not connected"
-
+        error: "WooCommerce store is not connected"
       })
-
     }
 
+    /*
+    --------------------------------
+    SUBSCRIPTION ENTITLEMENT
+    --------------------------------
+    */
+
+    await reserveConversationCredit(store)
 
     /*
     --------------------------------
@@ -533,40 +366,20 @@ async function handleCustomerConversation(
     --------------------------------
     */
 
-    const result =
-      await sendConversationToEngine({
+    const result = await sendConversationToEngine({
+      store: store.toObject(),
 
-        store:
-          store.toObject(),
+      channel,
 
-        channel,
+      customer: {
+        external_id: String(customer.external_id),
+        name: customer.name || null,
+        email: customer.email || null,
+        phone: customer.phone || null
+      },
 
-        customer: {
-
-          external_id:
-            String(
-              customer.external_id
-            ),
-
-          name:
-            customer.name ||
-            null,
-
-          email:
-            customer.email ||
-            null,
-
-          phone:
-            customer.phone ||
-            null
-
-        },
-
-        message:
-          message.trim()
-
-      })
-
+      message: message.trim()
+    })
 
     /*
     --------------------------------
@@ -575,65 +388,17 @@ async function handleCustomerConversation(
     */
 
     return res.status(200).json({
-
-      success:
-        true,
-
+      success: true,
       ...result
-
     })
-
 
   } catch (error) {
-
-    console.error(
-      "Customer conversation error:",
-      error.message
+    return handleConversationError(
+      res,
+      error,
+      "Customer conversation error:"
     )
-
-
-    /*
-    --------------------------------
-    ENGINE ERROR
-    --------------------------------
-    */
-
-    const status =
-      error.response?.status
-
-
-    if (status) {
-
-      return res.status(status).json({
-
-        success: false,
-
-        error:
-          error.response?.data?.error ||
-          "AI engine request failed"
-
-      })
-
-    }
-
-
-    /*
-    --------------------------------
-    GENERAL ERROR
-    --------------------------------
-    */
-
-    return res.status(500).json({
-
-      success: false,
-
-      error:
-        "Unable to process conversation"
-
-    })
-
   }
-
 }
 
 
@@ -644,9 +409,6 @@ EXPORTS
 */
 
 module.exports = {
-
   handleConversation,
-
   handleCustomerConversation
-
 }

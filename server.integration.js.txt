@@ -1,0 +1,9 @@
+// 1) Add alongside the other route constants near the top of server.js:
+const marketingRoutes = require("./routes/marketingRoutes")
+
+// 2) Add alongside other app.use route mounts, AFTER express.json():
+app.use("/api/marketing", marketingRoutes)
+
+// 3) Start scheduler only after connectDB() succeeds. In your existing startup
+// async function, immediately after `await connectDB()`:
+require("./cron/marketingEmailCron").startMarketingEmailCron()

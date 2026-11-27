@@ -16,6 +16,10 @@ const {
   enrollMarketingSubscriber,
 } = require("../services/marketingEmailService");
 
+const {
+  createTrialFields
+} = require("../services/trialService")
+
 const WooCommerceAuthHandoff = require("../models/woocommerceAuthHandoff");
 const IntegrationToken = require("../models/integrationToken");
 const ShopifyPendingInstallation = require("../models/shopifyPendingInstallation");
@@ -2252,7 +2256,6 @@ async function sendOtp(
     }
 
 
-
     /*
     --------------------------------
     NEW ACCOUNT + SIGNIN
@@ -2821,6 +2824,8 @@ async function verifyOtp(
           identity_provider:
             "email",
 
+          ...createTrialFields(),
+
           plan:
             "free"
 
@@ -2971,6 +2976,20 @@ if (
     SIGN IN
     =================================
     */
+
+      if (newlyRegistered && req.body.marketing_consent === true) {
+        try {
+          await enrollMarketingSubscriber({
+            email: user.email,
+            name: user.name,
+            source: pendingShopifyInstallation
+              ? "shopify-registration"
+              : "merchant-registration",
+          });
+        } catch (marketingError) {
+          console.error("[Marketing] Registration enrolment failed:", marketingError.message);
+        }
+      }
 
     if (
       purpose === "signin"

@@ -153,22 +153,11 @@ async function flutterwaveWebhook(req, res) {
     // 4. IDENTIFY SUBSCRIPTION
     // --------------------------------
 
-    // Expected reference:
-    // subscription_STOREID_PLAN_BILLINGCYCLE
-    //
-    // Example:
-    // subscription_64abcdef1234567890123456_pro_monthly
-
     const referenceMatch = transactionReference.match(
-      /^subscription_([a-fA-F0-9]{24})_(basic|pro|premium)_(monthly|yearly)$/
+      /^subscription_([a-fA-F0-9]{24})_(\d+)$/
     )
 
     if (!referenceMatch) {
-      console.log(
-        "Ignoring non-subscription Flutterwave transaction:",
-        transactionReference
-      )
-
       return res.status(200).json({
         received: true,
         processed: false,
@@ -177,13 +166,6 @@ async function flutterwaveWebhook(req, res) {
     }
 
     const storeId = referenceMatch[1]
-    const planName = referenceMatch[2].toLowerCase()
-    const billingCycle = referenceMatch[3].toLowerCase()
-
-    // --------------------------------
-    // 5. LOAD STORE AND PLAN
-    // --------------------------------
-
     const store = await Store.findById(storeId)
 
     if (!store) {
@@ -191,6 +173,42 @@ async function flutterwaveWebhook(req, res) {
         received: true,
         processed: false,
         reason: "Store not found"
+      })
+    }
+
+    // A completed delivery must never reactivate a cancelled subscription.
+    if (
+      String(store.flutterwave_subscription_reference || "") ===
+        transactionReference &&
+      String(store.flutterwave_transaction_id || "") ===
+        String(transactionId)
+    ) {
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        duplicate: true
+      })
+    }
+
+    if (store.pending_subscription_reference !== transactionReference) {
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: "Subscription reference is not pending"
+      })
+    }
+
+    const planName = String(store.pending_plan || "").toLowerCase()
+    const billingCycle = String(
+      store.pending_billing_cycle || ""
+    ).toLowerCase()
+
+    if (
+      !["basic", "pro", "premium"].includes(planName) ||
+      !["monthly", "yearly"].includes(billingCycle)
+    ) {
+      return res.status(400).json({
+        error: "Invalid pending subscription"
       })
     }
 
@@ -286,28 +304,45 @@ async function flutterwaveWebhook(req, res) {
       renewal.setFullYear(renewal.getFullYear() + 1)
     }
 
-    // --------------------------------
-    // 9. ACTIVATE SUBSCRIPTION
-    // --------------------------------
+    // Atomically consume the pending checkout.
+    const activatedStore = await Store.findOneAndUpdate(
+      {
+        _id: store._id,
+        pending_subscription_reference: transactionReference,
+        pending_plan: store.pending_plan,
+        pending_billing_cycle: store.pending_billing_cycle
+      },
+      {
+        $set: {
+          plan: planName,
+          subscription_status: "active",
+          subscription_renewal: renewal,
+          billing_grace_until: null,
+          system_locked: false,
+          monthly_order_limit: plan.monthly_order_limit,
+          transaction_fee: plan.transaction_fee,
+          flutterwave_transaction_id: String(transactionId),
+          flutterwave_subscription_reference: transactionReference,
+          flutterwave_billing_cycle: billingCycle,
+          flutterwave_last_payment_at: now,
+          orders_used: 0
+        },
+        $unset: {
+          pending_subscription_reference: 1,
+          pending_plan: 1,
+          pending_billing_cycle: 1
+        }
+      },
+      { new: true, runValidators: true }
+    )
 
-    store.plan = planName
-    store.subscription_status = "active"
-    store.subscription_renewal = renewal
-
-    store.billing_grace_until = null
-    store.system_locked = false
-
-    store.monthly_order_limit = plan.monthly_order_limit
-    store.transaction_fee = plan.transaction_fee
-
-    store.flutterwave_transaction_id = String(transactionId)
-    store.flutterwave_subscription_reference = transactionReference
-    store.flutterwave_billing_cycle = billingCycle
-    store.flutterwave_last_payment_at = now
-
-    store.orders_used = 0
-
-    await store.save()
+    if (!activatedStore) {
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        duplicate: true
+      })
+    }
 
     console.log("Flutterwave subscription activated:", {
       storeId: String(store._id),
