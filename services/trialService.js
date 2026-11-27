@@ -13,12 +13,17 @@ function createTrialFields() {
 }
 
 function hasActiveTrial(user) {
-  return Boolean(
-    user &&
-    user.trial_status === "active" &&
-    user.trial_ends_at &&
-    new Date(user.trial_ends_at).getTime() > Date.now()
-  )
+  if (
+    !user ||
+    user.trial_status !== "active" ||
+    !user.trial_ends_at
+  ) {
+    return false
+  }
+
+  const endsAt = new Date(user.trial_ends_at).getTime()
+
+  return Number.isFinite(endsAt) && endsAt > Date.now()
 }
 
 module.exports = {
